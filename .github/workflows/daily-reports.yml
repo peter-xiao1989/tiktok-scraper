@@ -1,0 +1,66 @@
+name: Daily Reports (投放8:00 / 产品16:30)
+
+on:
+  schedule:
+    # 投放日报:UTC 00:10 = 北京 08:10(投放数据 7:00 导入后)
+    - cron: '10 0 * * *'
+    # 产品日报:UTC 08:40 = 北京 16:40(产品数据 16:00 导入后)
+    - cron: '40 8 * * *'
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'toufang | chanpin'
+        required: false
+
+concurrency:
+  group: daily-reports
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: 同步数据并发送日报
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup lark-cli
+        run: |
+          npm install -g @larksuite/cli
+          echo "${{ secrets.FEISHU_APP_SECRET }}" | lark-cli config init \
+            --app-id "${{ secrets.FEISHU_APP_ID }}" \
+            --app-secret-stdin \
+            --brand feishu
+
+      - name: Setup python deps & fonts
+        run: |
+          sudo apt-get install -y -qq fonts-noto-cjk > /dev/null
+          pip install -q matplotlib
+
+      - name: Decide report kind
+        id: kind
+        run: |
+          K="${{ github.event.inputs.kind }}"
+          if [ -z "$K" ]; then
+            # cron 触发:按 UTC 小时判断(0 点=投放, 8 点=产品)
+            H=$(date -u +%H)
+            if [ "$H" -lt 4 ]; then K=toufang; else K=chanpin; fi
+          fi
+          echo "kind=$K" >> "$GITHUB_OUTPUT"
+          echo "Report kind: $K"
+
+      - name: Sync sheets to Base
+        env:
+          LARK_AS_BOT: "1"
+        run: python3 sheets_to_base.py "${{ steps.kind.outputs.kind }}"
+
+      # 发群暂停(等报告样式优化后恢复):删除下方 if 即恢复发送
+      - name: Render & send report
+        if: ${{ false }}
+        env:
+          LARK_AS_BOT: "1"
+        run: python3 render_report.py "${{ steps.kind.outputs.kind }}"
