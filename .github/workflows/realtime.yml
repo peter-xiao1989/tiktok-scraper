@@ -3,12 +3,13 @@ name: Realtime Ad Data (Every 2h)
 on:
   schedule:
     # Target: every even UTC hour (00,02,...22) = Beijing 08,10,...06.
-    # GitHub drops/delays scheduled runs under load, so we fire 3 times per
-    # window (:00 :20 :40). The script is a full refresh (idempotent), so extra
-    # fires just rewrite the same snapshot — whichever lands closest to the hour wins.
-    - cron: '0 */2 * * *'
-    - cron: '20 */2 * * *'
-    - cron: '40 */2 * * *'
+    # GitHub delays/drops scheduled runs under load, worst at :00 (global peak).
+    # So we avoid :00 entirely and bracket each even hour with two off-peak fires:
+    #   :50 of odd hours  → ~10 min before the target (01:50 → before 02:00)
+    #   :10 of even hours → ~10 min after  the target (02:10 → after  02:00)
+    # The script is a full refresh (idempotent); whichever fire lands persists.
+    - cron: '50 1/2 * * *'
+    - cron: '10 0/2 * * *'
   workflow_dispatch:
     inputs:
       target_date:
