@@ -7,7 +7,7 @@ const TABLE_ID  = process.env.FEISHU_BITABLE_TABLE  || 'tbl34DqzbdU9wqm1';
 const FIELD_DEFS = [
   { name: '项目组',             type: 1 },
   { name: '游戏名称',           type: 1 },
-  { name: '统计周期',           type: 1 },
+  { name: '统计周期',           type: 5 },
   { name: '新增用户',           type: 2 },
   { name: '活跃用户',           type: 2 },
   { name: '重复用户',           type: 2 },
@@ -140,10 +140,12 @@ async function setupFields(token) {
 function rowToRecord(row) {
   const fields = {};
   FIELD_DEFS.forEach((def, i) => {
-    const val = row[FIELD_KEYS[i]];
-    if (val !== undefined && val !== '') {
-      fields[def.name] = val;
+    let val = row[FIELD_KEYS[i]];
+    if (val === undefined || val === '') return;
+    if (def.type === 5 && typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      val = new Date(val).getTime();
     }
+    fields[def.name] = val;
   });
   return { fields };
 }
