@@ -571,11 +571,14 @@ async function ensureAdBidSummary(token) {
   const AB = `${ADS}!$B$2:$B$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
         AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AAD = `${ADS}!$AD$2:$AD$5000`,
         AAT = `${ADS}!$AT$2:$AT$5000`;
-  const T = 'T', U = 'U', V = 'V', W = 'W';
+  const T = 'T', U = 'U', V = 'V', W = 'W', X = 'X';
+  // Sort key clusters by game (game total spend, all bids), then by this row's
+  // (game,bid) spend within the game: date*1e8 + ROUND(gameTotal)*1e4 + ROUND(bidSpend,1)*10.
   const helperPlan = {
     [T]: i => `=IF(${ADS}!$B${i}="","",IF(COUNTIFS(${ADS}!$B$2:$B${i},${ADS}!$B${i},${ADS}!$D$2:$D${i},${ADS}!$D${i},${ADS}!$AT$2:$AT${i},${ADS}!$AT${i})=1,1,0))`,
     [U]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i},${AAT},${ADS}!$AT${i}))`,
-    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*10000000+$${U}${i},"")`,
+    [X]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i}))`,  // game total (all bids)
+    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*100000000+ROUND($${X}${i},0)*10000+ROUND($${U}${i},1)*10,"")`,
   };
   const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
   const g = r => `$${gameCol}${r}`, dt = r => `$${dateCol}${r}`, bd = r => `$${bidCol}${r}`;
@@ -600,8 +603,9 @@ async function ensureAdBidSummary(token) {
   await writeCols(token, AD_BID_SHEET_ID, helperPlan, helperRows);
   await writeCols(token, AD_BID_SHEET_ID, mainPlan, mainRows);
   await applyColumnFormats(token, AD_BID_SHEET_ID, header, mainRows);
+  // hide helper cols T,U,V,W,X (indices 19..23)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: AD_BID_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
+    { dimension: { sheetId: AD_BID_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 24 },
       dimensionProperties: { visible: false } }).catch(() => {});
   return mainRows;
 }
