@@ -26,7 +26,7 @@ jobs:
 
       - run: npx playwright install chromium --with-deps
 
-      - name: Run bitable-export
+      - name: Run product-api
         env:
           TIKTOK_EMAIL:      ${{ secrets.TIKTOK_EMAIL }}
           TIKTOK_PASSWORD:   ${{ secrets.TIKTOK_PASSWORD }}
@@ -34,7 +34,7 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           TARGET_DATE:       ${{ github.event.inputs.target_date }}
           DAYS: '1'
-        run: npm run bitable-export
+        run: npm run product-api
 
       - name: Upload debug screenshots
         if: failure()

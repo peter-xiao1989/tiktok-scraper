@@ -12,6 +12,7 @@
     "excel-import": "node src/excel-import.js",
     "ads-api": "node src/ads-api.js",
     "ads-realtime": "node src/ads-realtime.js",
+    "product-api": "node src/product-api.js",
     "diag": "node src/diag.js"
   },
   "keywords": [],

@@ -372,6 +372,63 @@ async function appendRows(rows, token) {
   process.stdout.write('\n');
 }
 
+// ─── Sheet clear ─────────────────────────────────────────────────────────────
+
+const ADS_HEADERS = [
+  '序号','游戏名称','系列名称','按天','消耗','广告收入 ROAS (TikTok)','活跃度','活跃度平均成本',
+  '人均广告次数','点击率（目标页面）','千次展示成本 (CPM)','平均点击成本（目标页面）',
+  '创意素材名称','账户名称','推广系列预算','推广系列类型','广告组名称','广告位类型',
+  '广告名称','广告文案','推广系列预算类型','应用安装数','应用安装平均成本',
+  '点击量（目标页面）','展示量','覆盖千人成本','转化量','平均转化成本',
+  '广告曝光事件率','广告曝光事件总数','广告曝光事件平均成本','广告曝光总价值','广告曝光事件平均价值',
+  '时区','去重打开次数','去重打开平均成本','打开率(%)','总打开次数','打开平均成本',
+  '第0日历日广告收入','第6日历日广告收入','第13日历日广告收入',
+  '第0日历日广告收入ROAS','第6日历日广告收入ROAS','第13日历日广告收入ROAS',
+  '出价方式',
+];
+
+async function clearSheetData(token) {
+  const r = await feishuReq('GET',
+    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/query`, token);
+  const sheet = (r.data?.sheets || []).find(s => s.sheet_id === ADS_SHEET_ID);
+  const rowCount = sheet?.grid_properties?.row_count || 0;
+  // Delete rows 2+ (API requires startIndex >= 1; row 1 = index 1 here means row 2)
+  // Feishu dimension_range uses 1-based inclusive indices
+  if (rowCount > 1) {
+    let remaining = rowCount - 1;
+    let deleted = 0;
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, 5000);
+      const cr = await feishuReq('DELETE',
+        `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+        { dimension: { sheetId: ADS_SHEET_ID, majorDimension: 'ROWS',
+            startIndex: 1, endIndex: chunk } });
+      if (cr.code !== 0) throw new Error('dimension_range delete failed: ' + JSON.stringify(cr));
+      deleted += cr.data?.delCount || chunk;
+      remaining -= chunk;
+      process.stdout.write(`\r  Deleted ${deleted} data rows...`);
+    }
+    process.stdout.write('\n');
+  }
+  // Overwrite row 1 with headers (replaces any leftover data in row 1)
+  const hw = await feishuReq('PUT',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+    { valueRange: { range: `${ADS_SHEET_ID}!A1:AT1`, values: [ADS_HEADERS] } });
+  if (hw.code !== 0) throw new Error('write headers failed: ' + JSON.stringify(hw));
+  console.log('  Headers written to row 1.');
+}
+
+function dateRange(start, end) {
+  const dates = [];
+  const cur = new Date(start);
+  const last = new Date(end);
+  while (cur <= last) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -379,6 +436,11 @@ async function main() {
   if (!accessToken) { console.error('TIKTOK_ACCESS_TOKEN required'); process.exit(1); }
 
   const feishuToken = await getFeishuToken();
+
+  if (process.env.CLEAR_BEFORE === 'true') {
+    console.log('Clearing sheet data...');
+    await clearSheetData(feishuToken);
+  }
 
   console.log('Loading existing keys for dedup...');
   const existingKeys = await getExistingKeys(feishuToken);
@@ -391,37 +453,53 @@ async function main() {
   const advertisers = await getAdvertisers(accessToken);
   console.log(`  ${advertisers.length} advertisers`);
 
+  // Build date list: START_DATE/END_DATE range, or TARGET_DATE, or yesterday per advertiser tz
+  const dates = (process.env.START_DATE && process.env.END_DATE)
+    ? dateRange(process.env.START_DATE, process.env.END_DATE)
+    : process.env.TARGET_DATE
+      ? [process.env.TARGET_DATE]
+      : null; // null = per-advertiser yesterday
+
   const allRows = [];
   for (const adv of advertisers) {
-    const tz   = tzLabel(adv.offsetHours);
-    const date = process.env.TARGET_DATE || yesterdayInOffset(adv.offsetHours);
-    const key  = `${adv.name}|${date}`;
+    const tz = tzLabel(adv.offsetHours);
+    const advDates = dates || [yesterdayInOffset(adv.offsetHours)];
 
-    process.stdout.write(`  [${adv.name}] ${tz} ${date} — `);
-    if (existingKeys.has(key)) { process.stdout.write('already exists, skipped\n'); continue; }
+    for (const date of advDates) {
+      const key = `${adv.name}|${date}`;
+      process.stdout.write(`  [${date}][${adv.name}] — `);
+      if (existingKeys.has(key)) { process.stdout.write('skip\n'); continue; }
 
-    let rows;
-    try {
-      rows = await fetchReport(adv.id, date, accessToken);
-    } catch (e) {
-      console.warn(`\n  [warn] ${e.message}`);
-      continue;
+      let rows;
+      try {
+        rows = await fetchReport(adv.id, date, accessToken);
+      } catch (e) {
+        console.warn(`\n  [warn] ${e.message}`);
+        continue;
+      }
+      process.stdout.write(`${rows.length} rows\n`);
+      if (rows.length === 0) continue;
+
+      const adIds = [...new Set(rows.map(r => r.dimensions.ad_id))];
+      const { adMap, campMap, agMap } = await enrichNames(adv.id, adIds, accessToken);
+
+      for (const row of rows) {
+        row._adInfo         = adMap[row.dimensions.ad_id] || {};
+        row._campInfo       = campMap[row._adInfo.campaign_id] || {};
+        row._agInfo         = agMap[row._adInfo.adgroup_id] || {};
+        row._advertiserName = adv.name;
+        row._tz             = tz;
+        allRows.push(recordToRow(row, ++lastSeq));
+      }
+      existingKeys.add(key);
+
+      // Write in batches per date to avoid losing data on error
+      if (allRows.length >= 500) {
+        console.log(`  Writing ${allRows.length} rows (intermediate flush)...`);
+        await appendRows(allRows, feishuToken);
+        allRows.length = 0;
+      }
     }
-    process.stdout.write(`${rows.length} rows\n`);
-    if (rows.length === 0) continue;
-
-    const adIds = [...new Set(rows.map(r => r.dimensions.ad_id))];
-    const { adMap, campMap, agMap } = await enrichNames(adv.id, adIds, accessToken);
-
-    for (const row of rows) {
-      row._adInfo       = adMap[row.dimensions.ad_id] || {};
-      row._campInfo     = campMap[row._adInfo.campaign_id] || {};
-      row._agInfo       = agMap[row._adInfo.adgroup_id] || {};
-      row._advertiserName = adv.name;
-      row._tz           = tz;
-      allRows.push(recordToRow(row, ++lastSeq));
-    }
-    existingKeys.add(key);
   }
 
   if (!allRows.length) { console.log('Nothing to write.'); return; }
