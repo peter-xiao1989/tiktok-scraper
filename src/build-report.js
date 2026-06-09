@@ -28,7 +28,8 @@ function feishuReq(method, path, token, body) {
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
     if (data) headers['Content-Length'] = Buffer.byteLength(data);
     const req = https.request({ hostname: 'open.feishu.cn', path, method, headers, timeout: 30000 },
-      res => { let d = ''; res.on('data', c => d += c); res.on('end', () => {
+      res => { const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => {
+        const d = Buffer.concat(chunks).toString('utf8');  // concat before decode (multibyte-safe)
         try { resolve(JSON.parse(d)); } catch (e) { reject(new Error(`non-JSON: ${d.slice(0, 200)}`)); }
       }); });
     req.on('timeout', () => { req.destroy(); reject(new Error(`timeout: ${path}`)); });
