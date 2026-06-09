@@ -289,9 +289,14 @@ async function main() {
     console.log('\nNo new product rows.');
   }
 
-  // Maintain 产品经营日报表 formulas (reverse-mirror + 200-row buffer).
-  // Runs at 16:00 right after product data lands, so report rows for the new
-  // day appear and pick up the morning's 投放 data via formula.
+  // 项目维度经营表 first — the 日报表 sort key reads its group-day 消耗.
+  try {
+    console.log('Maintaining 项目维度经营表...');
+    await ensureProjectSummary(feishuToken);
+  } catch (e) {
+    console.warn(`[warn] project summary maintenance: ${e.message}`);
+  }
+  // Maintain 产品经营日报表 (group rows ordered by 项目维度经营表's day spend).
   try {
     console.log('Maintaining 产品经营日报表...');
     await ensureReportFormulas(feishuToken);
@@ -303,12 +308,6 @@ async function main() {
     await ensureDailySummary(feishuToken);
   } catch (e) {
     console.warn(`[warn] daily summary maintenance: ${e.message}`);
-  }
-  try {
-    console.log('Maintaining 项目维度经营表...');
-    await ensureProjectSummary(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] project summary maintenance: ${e.message}`);
   }
   try {
     console.log('Maintaining 投放日表-产品维度...');

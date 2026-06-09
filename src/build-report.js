@@ -84,8 +84,9 @@ async function readHeader(token) {
 // sort key = date*1e7 + group-day-spend*1e3 + game-day-spend, so report rows
 // order by date desc, then 项目组 by its day spend desc, then games within a
 // group by spend. fullMap (game→group incl. extras) feeds the group-spend calc.
+const PROJ = "'项目维度经营表'";        // group-day spend source (built before the report)
 const SRCN = 'U', KEY = 'W', GKEY = 'X'; // X holds group-day spend (keeps W short)
-function buildPlan(header, reportGroupGames) {
+function buildPlan(header) {
   const nameToLetter = {};
   header.forEach((name, j) => { if (name && !nameToLetter[name]) nameToLetter[name] = colLetter(j + 1); });
   const gCol = nameToLetter['游戏名称'], dCol = nameToLetter['统计周期'], eCol = nameToLetter['消耗'],
@@ -93,13 +94,9 @@ function buildPlan(header, reportGroupGames) {
   for (const [n, v] of [['游戏名称', gCol], ['统计周期', dCol], ['消耗', eCol], ['新增用户', nCol], ['广告总收入', sCol]]) {
     if (!v) throw new Error(`日报表缺少必需表头列: ${n}`);
   }
-  // group-day spend for product row r: nested IF over each 项目组, summing that
-  // group's games' 消耗 via SUM(SUMIFS array) (shorter than SUMPRODUCT/MATCH).
-  const reportGroups = Object.keys(reportGroupGames);
-  const groupSpend = r => reportGroups.reduceRight((acc, grp) => {
-    const games = `{${reportGroupGames[grp].map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
-    return `IF(${PROD}!$B${r}="${grp}",SUM(SUMIFS(${ADS}!$E$2:$E$5000,${ADS}!$B$2:$B$5000,${games},${ADS}!$D$2:$D$5000,${PROD}!$D${r})),${acc})`;
-  }, '0');
+  // group-day spend for product row r: look up the already-built 项目维度经营表
+  // (A=项目组, B=统计周期 serial, C=消耗) — short formula, avoids the 1000-char limit.
+  const groupSpend = r => `SUMIFS(${PROJ}!$C$2:$C$5000,${PROJ}!$A$2:$A$5000,${PROD}!$B${r},${PROJ}!$B$2:$B$5000,DATEVALUE(${PROD}!$D${r}))`;
   const prodIdxAt = col => r => `=IFERROR(IF($${SRCN}${r}<1,"",INDEX(${PROD}!$${col}$2:$${col}$5000,$${SRCN}${r})),"")`;
   const sumifs = (col, r) => `SUMIFS(${ADS}!$${col}$2:$${col}$5000,${ADS}!$B$2:$B$5000,$${gCol}${r},${ADS}!$D$2:$D$5000,TEXT($${dCol}${r},"yyyy-MM-dd"))`;
   const gen = {
@@ -116,7 +113,7 @@ function buildPlan(header, reportGroupGames) {
     plan[colLetter(j + 1)] = spec.kind === 'prod' ? prodIdxAt(spec.col) : gen[spec.kind];
   });
   // GKEY(X): group-day spend (separate col so the W formula stays < 1000 chars)
-  plan[GKEY] = r => `=IF(${PROD}!$C${r}="","",${groupSpend(r)})`;
+  plan[GKEY] = r => `=IF(${PROD}!$C${r}="","",N(${groupSpend(r)}))`;
   // KEY(W): integer sort key = date*1e8 + group-day-spend*1e4 + (5000-row)
   // tiebreak. Orders by date desc, then 项目组 by day spend desc, then product
   // import order within a group. Integer (no decimals) → no precision collisions.
@@ -214,16 +211,8 @@ async function applyFilter(token, targetRow) {
 }
 
 async function ensureReportFormulas(token) {
-  const { getGroupMapping, EXTRA_GROUP_MAP } = require('./build-summaries');
   const header = await readHeader(token);
-  const { groups, groupGames } = await getGroupMapping(token);
-  // merge extra games into their group IF that group exists in the product table
-  const reportGroupGames = {};
-  for (const g of groups) reportGroupGames[g] = [...groupGames[g]];
-  for (const [game, grp] of Object.entries(EXTRA_GROUP_MAP)) {
-    if (reportGroupGames[grp] && !reportGroupGames[grp].includes(game)) reportGroupGames[grp].push(game);
-  }
-  const { plan, dateCol, roasCol, intCols } = buildPlan(header, reportGroupGames);
+  const { plan, dateCol, roasCol, intCols } = buildPlan(header);
   const dataCount = await getProductDataCount(token);
   const targetRow = dataCount + 1 + ROW_BUFFER; // +1 header offset
   console.log(`  product data rows: ${dataCount}, filling report rows 2..${targetRow}`);
