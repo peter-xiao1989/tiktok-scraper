@@ -83,7 +83,7 @@ async function readHeader(token) {
 // sort key = date*1e7 + group-day-spend*1e3 + game-day-spend, so report rows
 // order by date desc, then 项目组 by its day spend desc, then games within a
 // group by spend. fullMap (game→group incl. extras) feeds the group-spend calc.
-const SRCN = 'U', KEY = 'W';
+const SRCN = 'U', KEY = 'W', GKEY = 'X'; // X holds group-day spend (keeps W short)
 function buildPlan(header, reportGroupGames) {
   const nameToLetter = {};
   header.forEach((name, j) => { if (name && !nameToLetter[name]) nameToLetter[name] = colLetter(j + 1); });
@@ -92,12 +92,12 @@ function buildPlan(header, reportGroupGames) {
   for (const [n, v] of [['游戏名称', gCol], ['统计周期', dCol], ['消耗', eCol], ['新增用户', nCol], ['广告总收入', sCol]]) {
     if (!v) throw new Error(`日报表缺少必需表头列: ${n}`);
   }
-  // group-day spend for product row r: nested IF over each 项目组, summing 投放
-  // 消耗 of that group's games (ISNUMBER(MATCH) array, no #N/A poisoning).
+  // group-day spend for product row r: nested IF over each 项目组, summing that
+  // group's games' 消耗 via SUM(SUMIFS array) (shorter than SUMPRODUCT/MATCH).
   const reportGroups = Object.keys(reportGroupGames);
   const groupSpend = r => reportGroups.reduceRight((acc, grp) => {
     const games = `{${reportGroupGames[grp].map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
-    return `IF(${PROD}!$B${r}="${grp}",SUMPRODUCT(ISNUMBER(MATCH(${ADS}!$B$2:$B$5000,${games},0))*(${ADS}!$D$2:$D$5000=${PROD}!$D${r})*${ADS}!$E$2:$E$5000),${acc})`;
+    return `IF(${PROD}!$B${r}="${grp}",SUM(SUMIFS(${ADS}!$E$2:$E$5000,${ADS}!$B$2:$B$5000,${games},${ADS}!$D$2:$D$5000,${PROD}!$D${r})),${acc})`;
   }, '0');
   const prodIdxAt = col => r => `=IFERROR(IF($${SRCN}${r}<1,"",INDEX(${PROD}!$${col}$2:$${col}$5000,$${SRCN}${r})),"")`;
   const sumifs = (col, r) => `SUMIFS(${ADS}!$${col}$2:$${col}$5000,${ADS}!$B$2:$B$5000,$${gCol}${r},${ADS}!$D$2:$D$5000,TEXT($${dCol}${r},"yyyy-MM-dd"))`;
@@ -114,10 +114,12 @@ function buildPlan(header, reportGroupGames) {
     if (!spec) return;
     plan[colLetter(j + 1)] = spec.kind === 'prod' ? prodIdxAt(spec.col) : gen[spec.kind];
   });
+  // GKEY(X): group-day spend (separate col so the W formula stays < 1000 chars)
+  plan[GKEY] = r => `=IF(${PROD}!$C${r}="","",${groupSpend(r)})`;
   // KEY(W): integer sort key = date*1e8 + group-day-spend*1e4 + (5000-row)
   // tiebreak. Orders by date desc, then 项目组 by day spend desc, then product
   // import order within a group. Integer (no decimals) → no precision collisions.
-  plan[KEY] = r => `=IF(${PROD}!$C${r}="","",DATEVALUE(${PROD}!$D${r})*100000000+(${groupSpend(r)})*10000+(5000-ROW()))`;
+  plan[KEY] = r => `=IF(${PROD}!$C${r}="","",DATEVALUE(${PROD}!$D${r})*100000000+N($${GKEY}${r})*10000+(5000-ROW()))`;
   // SRCN(U): product row of the (ROW()-1)-th largest key → drives the reverse/sorted mirror
   plan[SRCN] = r => `=IFERROR(MATCH(LARGE($${KEY}$2:$${KEY}$5000,ROW()-1),$${KEY}$2:$${KEY}$5000,0),"")`;
   plan['V'] = r => `=IF($${gCol}${r}="","",IF(AND(N($${eCol}${r})=0,N($${sCol}${r})=0),0,1))`;
@@ -184,13 +186,13 @@ async function applyFormats(token, targetRow, dateCol, roasCol, intCols = []) {
   }
 }
 
-// Hide helper columns U(_srcN) V(_show) W(_key) — indices 20..22 (0-based).
+// Hide helper columns U(_srcN) V(_show) W(_key) X(_gkey) — indices 20..23.
 async function hideHelperCols(token) {
   const r = await feishuReq('PUT',
     `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: REPORT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 20, endIndex: 23 },
+    { dimension: { sheetId: REPORT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 20, endIndex: 24 },
       dimensionProperties: { visible: false } });
-  if (r.code !== 0) console.warn('  [warn] hide U:W:', JSON.stringify(r).slice(0, 120));
+  if (r.code !== 0) console.warn('  [warn] hide U:X:', JSON.stringify(r).slice(0, 120));
 }
 
 // Show only rows where _show (col V) > 0, i.e. hide rows whose 消耗 AND 广告总收入 are both 0.
@@ -224,10 +226,11 @@ async function ensureReportFormulas(token) {
   const dataCount = await getProductDataCount(token);
   const targetRow = dataCount + 1 + ROW_BUFFER; // +1 header offset
   console.log(`  product data rows: ${dataCount}, filling report rows 2..${targetRow}`);
-  // headers for helper cols U(_srcN) V(_show) W(_key)
+  // headers for helper cols U(_srcN) V(_show) W(_key) X(_gkey)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
-    { valueRange: { range: `${REPORT_SHEET_ID}!U1:W1`, values: [['_srcN', '_show', '_key']] } });
-  const { applyColumnFormats } = require('./build-summaries');
+    { valueRange: { range: `${REPORT_SHEET_ID}!U1:X1`, values: [['_srcN', '_show', '_key', '_gkey']] } });
+  const { applyColumnFormats, wrapDecimals } = require('./build-summaries');
+  wrapDecimals(plan, header);
   await writeFormulas(token, targetRow, plan);
   await applyColumnFormats(token, REPORT_SHEET_ID, header, targetRow);
   await applyFilter(token, targetRow);

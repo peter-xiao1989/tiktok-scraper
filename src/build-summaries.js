@@ -147,8 +147,10 @@ async function writeFormulas(token, sheetId, targetRow, plan) {
   process.stdout.write('\n');
 }
 
-// Feishu only supports 0/2-decimal number & percent formats (1-decimal rejected).
-// Counts → integer, ROAS/ROI/率 → percent(2), dates → date, everything else → 2dp.
+// Feishu number/percent formats only support 0 or 2 decimals (1-decimal masks
+// rejected). To show 1-decimal numbers we ROUND the value to 1 and clear the
+// cell format (Feishu's default then shows the raw value = 1 decimal).
+//   date → yyyy/MM/dd ; ROAS/ROI/率 → 0.00% ; counts → #,##0 ; else → 1-decimal.
 const FMT_INT_NAMES = new Set([
   '序号', '新增用户', '活跃用户', '重复用户', '有效用户', '总用户数', '总启动次数',
   '展示量', '点击量（目标页面）', '广告请求量', '广告曝光量', '转化量', '应用安装数',
@@ -156,23 +158,41 @@ const FMT_INT_NAMES = new Set([
 ]);
 const FMT_DATE_NAMES = new Set(['统计周期', '按天', '更新时间']);
 const FMT_PCT_NAMES = new Set(['次留', '7日留存', '14日留存', '30日留存']);
-function formatterFor(name) {
+function classify(name) {
   const n = (name || '').trim();
-  if (FMT_DATE_NAMES.has(n)) return 'yyyy/MM/dd';
-  if (/ROAS|ROI|率/.test(n) || FMT_PCT_NAMES.has(n)) return '0.00%';
-  if (FMT_INT_NAMES.has(n)) return '#,##0';
-  return '#,##0.00';
+  if (FMT_DATE_NAMES.has(n)) return 'date';
+  if (/ROAS|ROI|率/.test(n) || FMT_PCT_NAMES.has(n)) return 'pct';
+  if (FMT_INT_NAMES.has(n)) return 'int';
+  return 'dec';
 }
 
-// Apply per-column number formats by header name (idempotent; re-run daily so
-// formatting is permanent and never lost when formulas are rewritten).
+// Wrap decimal-column formulas with ROUND(.,1) so the value itself is 1-decimal.
+function wrapDecimals(plan, header) {
+  const colToName = {};
+  header.forEach((n, j) => { if (n) colToName[colLetter(j + 1)] = n; });
+  for (const col of Object.keys(plan)) {
+    const name = colToName[col];
+    if (!name || classify(name) !== 'dec') continue;
+    const g = plan[col];
+    plan[col] = r => { const f = g(r); const body = f.startsWith('=') ? f.slice(1) : f; return `=IFERROR(ROUND(${body},1),${body})`; };
+  }
+  return plan;
+}
+
+// Apply per-column formats by header name (idempotent; re-run daily → permanent).
+// dec columns get their format cleared so the ROUND-ed 1-decimal value shows raw.
 async function applyColumnFormats(token, sheetId, header, targetRow) {
   for (let j = 0; j < header.length; j++) {
     const name = header[j];
     if (!name) continue;
     const col = colLetter(j + 1);
+    const type = classify(name);
+    const style = type === 'date' ? { formatter: 'yyyy/MM/dd' }
+      : type === 'pct' ? { formatter: '0.00%' }
+      : type === 'int' ? { formatter: '#,##0' }
+      : { formatter: '' };  // dec → general format, shows ROUND-ed 1-decimal value
     const r = await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/style`, token,
-      { appendStyle: { range: `${sheetId}!${col}2:${col}${targetRow}`, style: { formatter: formatterFor(name) } } });
+      { appendStyle: { range: `${sheetId}!${col}2:${col}${targetRow}`, style } });
     if (r.code !== 0) console.warn(`  [warn] fmt ${col}(${name}):`, JSON.stringify(r).slice(0, 100));
   }
 }
@@ -183,6 +203,7 @@ async function ensureDailySummary(token) {
   const { plan, dateCol, roasCols } = buildPlan(header, maxSerial, minSerial);
   const targetRow = dayCount + 1 + ROW_BUFFER;
   console.log(`  日经营数据汇总: ${dayCount} 天 (serial ${minSerial}..${maxSerial}), 填充 2..${targetRow}`);
+  wrapDecimals(plan, header);
   await writeFormulas(token, SUMMARY_SHEET_ID, targetRow, plan);
   await applyColumnFormats(token, SUMMARY_SHEET_ID, header, targetRow);
   return targetRow;
@@ -297,6 +318,7 @@ async function ensureProjectSummary(token) {
   plan[hCol] = r => ifGrp(r, `IFERROR($${gCol}${r}/$${fCol}${r},"")`);                    // 累计 ROI
   plan[iCol] = r => ifGrp(r, `SUMIFS(${PE},${PB},$${aCol}${r},${PD},${dtxt(r)})`);        // 新增用户
 
+  wrapDecimals(plan, header);
   await writeFormulas(token, PROJECT_SHEET_ID, targetRow, plan);
   await applyColumnFormats(token, PROJECT_SHEET_ID, header, targetRow);
   // hide helper columns (today/cum/key spend + pos)
@@ -385,6 +407,7 @@ async function ensureAdProductSummary(token) {
   // write helper columns (rows 2..helperRows)
   await writeCols(token, AD_PRODUCT_SHEET_ID, helperPlan, helperRows);
   // write main columns (rows 2..mainRows)
+  wrapDecimals(mainPlan, header);
   await writeCols(token, AD_PRODUCT_SHEET_ID, mainPlan, mainRows);
   // formats: date col, ROAS percent
   await applyColumnFormats(token, AD_PRODUCT_SHEET_ID, header, mainRows);
@@ -490,6 +513,7 @@ async function ensureAdMaterialSummary(token) {
   };
 
   await writeCols(token, AD_MATERIAL_SHEET_ID, helperPlan, helperRows);
+  wrapDecimals(mainPlan, header);
   await writeCols(token, AD_MATERIAL_SHEET_ID, mainPlan, mainRows);
   await applyColumnFormats(token, AD_MATERIAL_SHEET_ID, header, mainRows);
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
@@ -529,5 +553,5 @@ if (require.main === module) {
 
 module.exports = {
   ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary,
-  getFeishuToken, getGroupMapping, EXTRA_GROUP_MAP, applyColumnFormats,
+  getFeishuToken, getGroupMapping, EXTRA_GROUP_MAP, applyColumnFormats, wrapDecimals,
 };
