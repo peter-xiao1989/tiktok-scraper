@@ -1,0 +1,36 @@
+name: Realtime Ad Data (Every 2h)
+
+on:
+  schedule:
+    # Every 2 hours UTC = every 2 hours Beijing time (offset fixed, runs at 00,02,04...22 UTC)
+    # Beijing time examples: UTC+8, so UTC 00:00 = BJ 08:00, UTC 02:00 = BJ 10:00 ...
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'Override date YYYY-MM-DD (default: today per account timezone)'
+        required: false
+
+jobs:
+  realtime:
+    name: 每日实时投放数据
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Fetch & refresh realtime data
+        env:
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_BC_ID:        ${{ secrets.TIKTOK_BC_ID }}
+          FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
+          TARGET_DATE:         ${{ github.event.inputs.target_date }}
+        run: npm run ads-realtime

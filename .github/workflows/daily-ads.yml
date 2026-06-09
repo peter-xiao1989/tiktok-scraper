@@ -1,0 +1,34 @@
+name: Daily Ad Data (07:00 BJT)
+
+on:
+  schedule:
+    - cron: '0 23 * * *'   # 23:00 UTC = 07:00 Beijing next day
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'Override date YYYY-MM-DD (default: per-account yesterday)'
+        required: false
+
+jobs:
+  ad-data:
+    name: TT广告数据 (Marketing API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run ads-api
+        env:
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_BC_ID:        ${{ secrets.TIKTOK_BC_ID }}
+          FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
+          TARGET_DATE:         ${{ github.event.inputs.target_date }}
+        run: npm run ads-api

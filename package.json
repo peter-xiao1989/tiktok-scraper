@@ -1,0 +1,24 @@
+{
+  "name": "tiktok-scraper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "probe": "node src/probe.js",
+    "scrape": "node src/index.js",
+    "bulk": "node src/bulk.js",
+    "feishu-export": "node src/feishu-export.js",
+    "bitable-export": "node src/bitable-export.js",
+    "excel-import": "node src/excel-import.js",
+    "ads-api": "node src/ads-api.js",
+    "ads-realtime": "node src/ads-realtime.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.60.0",
+    "xlsx": "^0.18.5"
+  }
+}

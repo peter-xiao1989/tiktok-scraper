@@ -1,0 +1,37 @@
+name: Daily Product Data (16:00 BJT)
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 08:00 UTC = 16:00 Beijing
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'Override date YYYY-MM-DD (default: yesterday)'
+        required: false
+
+jobs:
+  product-data:
+    name: TT产品数据 (Developer Portal)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npx playwright install chromium --with-deps
+
+      - name: Run bitable-export
+        env:
+          TIKTOK_EMAIL:      ${{ secrets.TIKTOK_EMAIL }}
+          TIKTOK_PASSWORD:   ${{ secrets.TIKTOK_PASSWORD }}
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          TARGET_DATE:       ${{ github.event.inputs.target_date }}
+          DAYS: '1'
+        run: npm run bitable-export
