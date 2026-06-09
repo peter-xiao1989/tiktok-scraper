@@ -45,39 +45,70 @@ async function getFeishuToken() {
 }
 
 // INDEX into 产品数据原表 column `col` at the reverse-mirrored source row $U{r}
-function prodIdx(r, col) {
-  return `=IFERROR(IF($U${r}<1,"",INDEX(${PROD}!$${col}$2:$${col}$5000,$U${r})),"")`;
-}
+function colLetter(n) { let c = ''; while (n > 0) { const r = (n - 1) % 26; c = String.fromCharCode(65 + r) + c; n = Math.floor((n - 1) / 26); } return c; }
 
-// SUMIFS over 投放数据原表 column `col` for game $D{r} + date $B{r}
-function adsSumifs(r, col) {
-  return `SUMIFS(${ADS}!$${col}$2:$${col}$5000,${ADS}!$B$2:$B$5000,$D${r},${ADS}!$D$2:$D$5000,TEXT($B${r},"yyyy-MM-dd"))`;
-}
-
-// Column formula generators, keyed by report column letter
-const COLS = {
-  A: r => `=IF($D${r}="","",ROW()-1)`,                              // 序号
-  B: r => prodIdx(r, 'D'),                                          // 统计周期
-  C: r => prodIdx(r, 'B'),                                          // 项目组
-  D: r => prodIdx(r, 'C'),                                          // 游戏名称
-  E: r => `=IF($D${r}="","",${adsSumifs(r, 'E')})`,                 // 消耗
-  F: r => `=IF($D${r}="","",IFERROR(SUMPRODUCT((${ADS}!$B$2:$B$5000=$D${r})*(${ADS}!$D$2:$D$5000=TEXT($B${r},"yyyy-MM-dd"))*${ADS}!$F$2:$F$5000*${ADS}!$E$2:$E$5000)/$E${r},""))`, // 广告收入 ROAS (加权)
-  G: r => `=IF($D${r}="","",IFERROR($E${r}/${adsSumifs(r, 'G')},""))`, // 活跃度平均成本 = 消耗/活跃度
-  H: r => `=IF($D${r}="","",IFERROR($E${r}/$I${r},""))`,            // 运营新增成本 = 消耗/新增用户
-  I: r => prodIdx(r, 'E'),                                          // 新增用户
-  J: r => prodIdx(r, 'F'),                                          // 活跃用户
-  K: r => prodIdx(r, 'K'),                                          // 人均进入次数
-  L: r => prodIdx(r, 'L'),                                          // 每位用户平均时长(分)
-  M: r => prodIdx(r, 'N'),                                          // 平均启动速度(秒)
-  N: r => prodIdx(r, 'O'),                                          // 平均首次启动速度(秒)
-  O: r => prodIdx(r, 'P'),                                          // 启动成功率
-  P: r => prodIdx(r, 'Z'),                                          // eCPM
-  Q: r => prodIdx(r, 'Y'),                                          // 广告点击率
-  R: r => prodIdx(r, 'AA'),                                         // 人均广告展示次数
-  S: r => prodIdx(r, 'AB'),                                         // 广告总收入
-  U: r => `=COUNTA(${PROD}!$C$2:$C$5000)-ROW()+2`,                  // _srcN 辅助列(倒序源行号)
-  V: r => `=IF($D${r}="","",IF(AND(N($E${r})=0,N($S${r})=0),0,1))`, // _show: 消耗+广告总收入都为0则0(隐藏)
+// Report field -> data source. Formulas are placed by HEADER NAME (not by a
+// fixed column position), so reordering report columns never misaligns values.
+// kind 'prod' pulls 产品数据原表 column `col`; others compute from 投放数据原表.
+const FIELD_SRC = {
+  '序号': { kind: 'seq' },
+  '统计周期': { kind: 'prod', col: 'D' },
+  '项目组': { kind: 'prod', col: 'B' },
+  '游戏名称': { kind: 'prod', col: 'C' },
+  '消耗': { kind: 'spend' },
+  '广告收入 ROAS (TikTok)': { kind: 'roas' },
+  '活跃度平均成本': { kind: 'activecost' },
+  '运营新增成本': { kind: 'opcost' },
+  '新增用户': { kind: 'prod', col: 'E' },
+  '活跃用户': { kind: 'prod', col: 'F' },
+  '人均进入次数': { kind: 'prod', col: 'K' },
+  '每位用户平均时长(分)': { kind: 'prod', col: 'L' },
+  '平均启动速度(秒)': { kind: 'prod', col: 'N' },
+  '平均首次启动速度(秒)': { kind: 'prod', col: 'O' },
+  '启动成功率': { kind: 'prod', col: 'P' },
+  'eCPM': { kind: 'prod', col: 'Z' },
+  '广告点击率': { kind: 'prod', col: 'Y' },
+  '人均广告展示次数': { kind: 'prod', col: 'AA' },
+  '广告总收入': { kind: 'prod', col: 'AB' },
 };
+
+async function readHeader(token) {
+  const r = await feishuReq('GET',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${REPORT_SHEET_ID}!A1:AZ1`, token);
+  return (r.data?.valueRange?.values?.[0] || []).map(v => (v == null ? '' : String(v).trim()));
+}
+
+// Build { columnLetter -> formulaGenerator(r) } from the live header row.
+const SRCN = 'U'; // helper col holding the reverse-mirror source row number
+function buildPlan(header) {
+  const nameToLetter = {};
+  header.forEach((name, j) => { if (name && !nameToLetter[name]) nameToLetter[name] = colLetter(j + 1); });
+  const gCol = nameToLetter['游戏名称'], dCol = nameToLetter['统计周期'], eCol = nameToLetter['消耗'],
+        nCol = nameToLetter['新增用户'], sCol = nameToLetter['广告总收入'];
+  for (const [n, v] of [['游戏名称', gCol], ['统计周期', dCol], ['消耗', eCol], ['新增用户', nCol], ['广告总收入', sCol]]) {
+    if (!v) throw new Error(`日报表缺少必需表头列: ${n}`);
+  }
+  const prodIdxAt = col => r => `=IFERROR(IF($${SRCN}${r}<1,"",INDEX(${PROD}!$${col}$2:$${col}$5000,$${SRCN}${r})),"")`;
+  const sumifs = (col, r) => `SUMIFS(${ADS}!$${col}$2:$${col}$5000,${ADS}!$B$2:$B$5000,$${gCol}${r},${ADS}!$D$2:$D$5000,TEXT($${dCol}${r},"yyyy-MM-dd"))`;
+  const gen = {
+    seq: r => `=IF($${gCol}${r}="","",ROW()-1)`,
+    spend: r => `=IF($${gCol}${r}="","",${sumifs('E', r)})`,
+    roas: r => `=IF($${gCol}${r}="","",IFERROR(SUMPRODUCT((${ADS}!$B$2:$B$5000=$${gCol}${r})*(${ADS}!$D$2:$D$5000=TEXT($${dCol}${r},"yyyy-MM-dd"))*${ADS}!$F$2:$F$5000*${ADS}!$E$2:$E$5000)/$${eCol}${r},""))`,
+    activecost: r => `=IF($${gCol}${r}="","",IFERROR($${eCol}${r}/${sumifs('G', r)},""))`,
+    opcost: r => `=IF($${gCol}${r}="","",IFERROR($${eCol}${r}/$${nCol}${r},""))`,
+  };
+  const plan = {};
+  header.forEach((name, j) => {
+    const spec = FIELD_SRC[name];
+    if (!spec) return;
+    plan[colLetter(j + 1)] = spec.kind === 'prod' ? prodIdxAt(spec.col) : gen[spec.kind];
+  });
+  plan[SRCN] = r => `=COUNTA(${PROD}!$C$2:$C$5000)-ROW()+2`;
+  plan['V'] = r => `=IF($${gCol}${r}="","",IF(AND(N($${eCol}${r})=0,N($${sCol}${r})=0),0,1))`;
+  // integer-format columns (counts that should show no decimals)
+  const intCols = ['新增用户', '活跃用户', '总用户数', '总启动次数'].map(n => nameToLetter[n]).filter(Boolean);
+  return { plan, dateCol: dCol, roasCol: nameToLetter['广告收入 ROAS (TikTok)'], intCols };
+}
 
 async function getProductDataCount(token) {
   // Read header-query row count, then count non-empty C column
@@ -96,8 +127,8 @@ async function getProductDataCount(token) {
 }
 
 // Write formulas for report rows 2..targetRow (header in row 1)
-async function writeFormulas(token, targetRow) {
-  for (const [col, gen] of Object.entries(COLS)) {
+async function writeFormulas(token, targetRow, plan) {
+  for (const [col, gen] of Object.entries(plan)) {
     const values = [];
     for (let r = 2; r <= targetRow; r++) values.push([{ type: 'formula', text: gen(r) }]);
     // batch by 200 rows to keep request bodies reasonable
@@ -119,15 +150,22 @@ async function writeFormulas(token, targetRow) {
 // Apply number formats: B=date, F=percent.
 // NOTE: Feishu style API only accepts "0%" or "0.00%" for percent — 1-digit
 // ("0.0%") is rejected, so we use 2-digit here to keep F numeric/sortable.
-async function applyFormats(token, targetRow) {
+async function applyFormats(token, targetRow, dateCol, roasCol, intCols = []) {
   const setFmt = (range, formatter) => feishuReq('PUT',
     `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/style`, token,
     { appendStyle: { range, style: { formatter } } });
-  let r;
-  r = await setFmt(`${REPORT_SHEET_ID}!B2:B${targetRow}`, 'yyyy/MM/dd');
-  if (r.code !== 0) console.warn('  [warn] B date fmt:', JSON.stringify(r).slice(0, 120));
-  r = await setFmt(`${REPORT_SHEET_ID}!F2:F${targetRow}`, '0.00%');
-  if (r.code !== 0) console.warn('  [warn] F pct fmt:', JSON.stringify(r).slice(0, 120));
+  if (dateCol) {
+    const r = await setFmt(`${REPORT_SHEET_ID}!${dateCol}2:${dateCol}${targetRow}`, 'yyyy/MM/dd');
+    if (r.code !== 0) console.warn('  [warn] date fmt:', JSON.stringify(r).slice(0, 120));
+  }
+  if (roasCol) {
+    const r = await setFmt(`${REPORT_SHEET_ID}!${roasCol}2:${roasCol}${targetRow}`, '0.00%');
+    if (r.code !== 0) console.warn('  [warn] roas fmt:', JSON.stringify(r).slice(0, 120));
+  }
+  for (const c of intCols) {
+    const r = await setFmt(`${REPORT_SHEET_ID}!${c}2:${c}${targetRow}`, '0');
+    if (r.code !== 0) console.warn(`  [warn] int fmt ${c}:`, JSON.stringify(r).slice(0, 120));
+  }
 }
 
 // Hide a leftover empty row in the report? N/A. Hide helper columns U:V.
@@ -140,26 +178,33 @@ async function hideHelperCols(token) {
 }
 
 // Show only rows where _show (col V) > 0, i.e. hide rows whose 消耗 AND 广告总收入 are both 0.
+// A sheet holds at most one filter: PUT-update its V condition if it exists,
+// otherwise POST-create. (POST on an existing filter returns a misleading 1315203.)
 async function applyFilter(token, targetRow) {
-  // delete existing filter first (idempotent), then create
-  await feishuReq('DELETE',
-    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/${REPORT_SHEET_ID}/filter`, token).catch(() => {});
-  const r = await feishuReq('POST',
-    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/${REPORT_SHEET_ID}/filter`, token,
-    { range: `${REPORT_SHEET_ID}!A1:V${targetRow}`, col: 'V',
-      condition: { filter_type: 'number', compare_type: 'greater', expected: ['0'] } });
+  const cond = { filter_type: 'number', compare_type: 'greater', expected: ['0'] };
+  const base = `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/${REPORT_SHEET_ID}/filter`;
+  const g = await feishuReq('GET', base, token).catch(() => ({}));
+  const exists = g?.data?.sheet_filter_info?.filter_infos?.length > 0;
+  let r;
+  if (exists) {
+    r = await feishuReq('PUT', base, token, { col: 'V', condition: cond });
+  } else {
+    r = await feishuReq('POST', base, token, { range: `${REPORT_SHEET_ID}!A1:V${targetRow}`, col: 'V', condition: cond });
+  }
   if (r.code !== 0) console.warn('  [warn] set filter:', JSON.stringify(r).slice(0, 150));
 }
 
 async function ensureReportFormulas(token) {
+  const header = await readHeader(token);
+  const { plan, dateCol, roasCol, intCols } = buildPlan(header);
   const dataCount = await getProductDataCount(token);
   const targetRow = dataCount + 1 + ROW_BUFFER; // +1 header offset
   console.log(`  product data rows: ${dataCount}, filling report rows 2..${targetRow}`);
   // headers for helper cols U(_srcN) and V(_show)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
     { valueRange: { range: `${REPORT_SHEET_ID}!U1:V1`, values: [['_srcN', '_show']] } });
-  await writeFormulas(token, targetRow);
-  await applyFormats(token, targetRow);
+  await writeFormulas(token, targetRow, plan);
+  await applyFormats(token, targetRow, dateCol, roasCol, intCols);
   await applyFilter(token, targetRow);
   await hideHelperCols(token);
   return targetRow;
