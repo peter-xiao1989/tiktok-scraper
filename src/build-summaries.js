@@ -85,12 +85,10 @@ async function getProductDateInfo(token) {
   return { dayCount: days.size, maxSerial: isFinite(maxS) ? maxS : 0, minSerial: isFinite(minS) ? minS : 0 };
 }
 
-// Helper cells (far column) hold the max/min date serial of the product table.
-// 产品数据原表!D is a TEXT date ("YYYY-MM-DD"), so we DATEVALUE it to a serial.
-const HELP_MAX = 'AX1', HELP_MIN = 'AX2';
-
 // Build { columnLetter -> generator(r) } for 日经营数据汇总 by header name.
-function buildPlan(header) {
+// maxSerial/minSerial are inlined as numeric constants (no helper cells), so
+// editing/reordering columns in the sheet can't break a cell reference.
+function buildPlan(header, maxSerial, minSerial) {
   const L = {};
   header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
   const dCol = L['统计周期'];
@@ -102,8 +100,8 @@ function buildPlan(header) {
   const guard = (r, body) => `=IF($${dCol}${r}="","",${body})`;
 
   const FIELD = {
-    // reverse date sequence from helper max serial; blank past the earliest day
-    '统计周期': r => `=IF(($${HELP_MAX}-ROW()+2)<$${HELP_MIN},"",$${HELP_MAX}-ROW()+2)`,
+    // reverse date sequence from inlined max serial; blank past the earliest day
+    '统计周期': r => `=IF((${maxSerial}-ROW()+2)<${minSerial},"",${maxSerial}-ROW()+2)`,
     '消耗': r => guard(r, `SUMIFS(${AE},${AD},${dtxt(r)})`),
     '广告总收入': r => guard(r, `SUMIFS(${PAB},${PD},${dtxt(r)})`),
     '当日广告收入 ROAS (TikTok)': r => guard(r, `IFERROR($${revCol}${r}/$${spendCol}${r},"")`),
@@ -154,20 +152,12 @@ async function applyFormats(token, sheetId, targetRow, dateCol, roasCols) {
 
 async function ensureDailySummary(token) {
   const header = await readHeader(token, SUMMARY_SHEET_ID);
-  const { plan, dateCol, roasCols } = buildPlan(header);
   const { dayCount, maxSerial, minSerial } = await getProductDateInfo(token);
+  const { plan, dateCol, roasCols } = buildPlan(header, maxSerial, minSerial);
   const targetRow = dayCount + 1 + ROW_BUFFER;
   console.log(`  日经营数据汇总: ${dayCount} 天 (serial ${minSerial}..${maxSerial}), 填充 2..${targetRow}`);
-  // write helper max/min date serial as plain numbers
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token, {
-    valueRange: { range: `${SUMMARY_SHEET_ID}!${HELP_MAX}:${HELP_MIN}`,
-      values: [[maxSerial], [minSerial]] } });
   await writeFormulas(token, SUMMARY_SHEET_ID, targetRow, plan);
   await applyFormats(token, SUMMARY_SHEET_ID, targetRow, dateCol, roasCols);
-  // hide helper column AX (index 49)
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: SUMMARY_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 49, endIndex: 50 },
-      dimensionProperties: { visible: false } }).catch(() => {});
   return targetRow;
 }
 
@@ -208,10 +198,14 @@ async function ensureProjectSummary(token) {
   const header = await readHeader(token, PROJECT_SHEET_ID);
   const L = {};
   header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
-  const need = n => { if (!L[n]) throw new Error(`项目维度经营表缺少表头: ${n}`); return L[n]; };
+  // accept any of the candidate header names (the sheet's labels have been edited)
+  const need = (...names) => {
+    for (const n of names) if (L[n]) return L[n];
+    throw new Error(`项目维度经营表缺少表头: ${names.join(' / ')}`);
+  };
   const aCol = need('项目组'), bCol = need('统计周期'), cCol = need('消耗'), dCol = need('广告总收入'),
-        eCol = need('当日广告收入 ROAS (TikTok)'), fCol = need('累计消耗'), gCol = need('累计收入'),
-        hCol = need('TT累计ROI'), iCol = need('新增用户');
+        eCol = need('当日广告收入 ROAS (TikTok)'), fCol = need('项目累计消耗', '累计消耗'),
+        gCol = need('项目累计收入', '累计收入'), hCol = need('项目累计ROI', 'TT累计ROI'), iCol = need('新增用户');
 
   const { dayCount, maxSerial, minSerial } = await getProductDateInfo(token);
   const { groups, groupGames } = await getGroupMapping(token);
@@ -225,16 +219,15 @@ async function ensureProjectSummary(token) {
   const CUM0 = TODAY0 + N;                  // R+N
   const todayCols = Array.from({ length: N }, (_, k) => colLetter(TODAY0 + k));
   const cumCols = Array.from({ length: N }, (_, k) => colLetter(CUM0 + k));
-  const HMAX = 'BA1', HMIN = 'BA2';
-  const MAXC = `$${HMAX}`, MINC = `$${HMIN}`;
 
   const PD = `${PROD}!$D$2:$D$5000`, PAB = `${PROD}!$AB$2:$AB$5000`, PE = `${PROD}!$E$2:$E$5000`, PB = `${PROD}!$B$2:$B$5000`;
   const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`, AB = `${ADS}!$B$2:$B$5000`;
   const gamesArr = groups.map(g => `{${groupGames[g].map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`);
   const groupsArr = `{${groups.map(g => `"${g}"`).join(',')}}`;
 
-  const dser = r => `(${MAXC}-INT((${r}-2)/${N}))`;          // this row's date serial
-  const invalid = r => `${dser(r)}<${MINC}`;
+  // inline max/min serial as numeric constants (no helper cells → no ref drift)
+  const dser = r => `(${maxSerial}-INT((${r}-2)/${N}))`;     // this row's date serial
+  const invalid = r => `${dser(r)}<${minSerial}`;
   const dtxt = r => `TEXT(${dser(r)},"yyyy-MM-dd")`;
   const rank = r => `(MOD(${r}-2,${N})+1)`;
   const todayRange = r => `$${todayCols[0]}${r}:$${todayCols[N - 1]}${r}`;
@@ -261,17 +254,11 @@ async function ensureProjectSummary(token) {
   plan[hCol] = r => ifGrp(r, `IFERROR($${gCol}${r}/$${fCol}${r},"")`);                    // 累计 ROI
   plan[iCol] = r => ifGrp(r, `SUMIFS(${PE},${PB},$${aCol}${r},${PD},${dtxt(r)})`);        // 新增用户
 
-  // write max/min serial helper values
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
-    { valueRange: { range: `${PROJECT_SHEET_ID}!${HMAX}:${HMIN}`, values: [[maxSerial], [minSerial]] } });
   await writeFormulas(token, PROJECT_SHEET_ID, targetRow, plan);
   await applyFormats(token, PROJECT_SHEET_ID, targetRow, bCol, [eCol, hCol]);
-  // hide helper columns (today+cum) and the serial helper col BA(52)
+  // hide helper columns (today spend + cumulative spend)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
     { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: CUM0 + N - 1 },
-      dimensionProperties: { visible: false } }).catch(() => {});
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 52, endIndex: 53 },
       dimensionProperties: { visible: false } }).catch(() => {});
   return targetRow;
 }
