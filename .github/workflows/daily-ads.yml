@@ -2,12 +2,19 @@ name: Daily Ad Data (07:00 BJT)
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # 23:00 UTC = 07:00 Beijing next day
+    # Off-peak minutes (avoid :00 global congestion) + a backup fire. ads-api
+    # dedups by account|date, so a duplicate run is harmless.
+    - cron: '17 23 * * *'   # 07:17 BJT
+    - cron: '47 23 * * *'   # 07:47 BJT (backup)
   workflow_dispatch:
     inputs:
       target_date:
         description: 'Override date YYYY-MM-DD (default: per-account yesterday)'
         required: false
+
+concurrency:
+  group: daily-ads
+  cancel-in-progress: false
 
 jobs:
   ad-data:

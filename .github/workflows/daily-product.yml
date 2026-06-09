@@ -2,12 +2,19 @@ name: Daily Product Data (16:00 BJT)
 
 on:
   schedule:
-    - cron: '0 8 * * *'   # 08:00 UTC = 16:00 Beijing
+    # Off-peak minutes + backup fire. product-api dedups by game|date, so a
+    # duplicate run skips already-imported rows.
+    - cron: '13 8 * * *'   # 16:13 BJT
+    - cron: '43 8 * * *'   # 16:43 BJT (backup)
   workflow_dispatch:
     inputs:
       target_date:
         description: 'Override date YYYY-MM-DD (default: yesterday)'
         required: false
+
+concurrency:
+  group: daily-product
+  cancel-in-progress: false
 
 jobs:
   product-data:
@@ -26,7 +33,7 @@ jobs:
 
       - run: npx playwright install chromium --with-deps
 
-      - name: Run product-api
+      - name: Run product-api (retry on login timeout)
         env:
           TIKTOK_EMAIL:      ${{ secrets.TIKTOK_EMAIL }}
           TIKTOK_PASSWORD:   ${{ secrets.TIKTOK_PASSWORD }}
@@ -34,7 +41,14 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           TARGET_DATE:       ${{ github.event.inputs.target_date }}
           DAYS: '1'
-        run: npm run product-api
+        run: |
+          for i in 1 2 3; do
+            echo "=== product-api attempt $i ==="
+            if npm run product-api; then exit 0; fi
+            echo "attempt $i failed (likely TikTok login timeout); retrying in 30s..."
+            sleep 30
+          done
+          echo "all attempts failed"; exit 1
 
       - name: Upload debug screenshots
         if: failure()
