@@ -61,38 +61,62 @@ function tiktokGet(path, accessToken) {
   });
 }
 
+async function resolveAdvertiserNames(ids, accessToken) {
+  const qs = new URLSearchParams({
+    advertiser_ids: JSON.stringify(ids),
+    fields: JSON.stringify(['advertiser_name']),
+  }).toString();
+  const r = await tiktokGet(`/open_api/v1.3/advertiser/info/?${qs}`, accessToken);
+  if (r.code !== 0) return ids.map(id => ({ id, name: id }));
+  const nameMap = {};
+  for (const adv of r.data?.list || []) nameMap[String(adv.advertiser_id)] = adv.advertiser_name;
+  return ids.map(id => ({ id, name: nameMap[id] || id }));
+}
+
 async function getAdvertisers(bcId, accessToken) {
+  const appId     = process.env.TIKTOK_APP_ID;
+  const appSecret = process.env.TIKTOK_APP_SECRET;
+
+  // 1. oauth2/advertiser/get — returns all advertisers that authorized this app
+  if (appId && appSecret) {
+    const qs = new URLSearchParams({ app_id: appId, secret: appSecret, access_token: accessToken }).toString();
+    const r = await tiktokGet(`/open_api/v1.3/oauth2/advertiser/get/?${qs}`, accessToken);
+    if (r.code === 0) {
+      const ids = (r.data?.list || []).map(String);
+      console.log(`  oauth2/advertiser/get → ${ids.length} advertisers`);
+      return resolveAdvertiserNames(ids, accessToken);
+    }
+    console.warn(`[warn] oauth2/advertiser/get: code=${r.code} ${r.message}`);
+  }
+
+  // 2. BC advertiser list
+  if (bcId) {
+    try {
+      const list = [];
+      let page = 1;
+      while (true) {
+        const qs = new URLSearchParams({ bc_id: bcId, page, page_size: 100 }).toString();
+        const r = await tiktokGet(`/open_api/v1.3/bc/advertiser/list/?${qs}`, accessToken);
+        if (r.code !== 0) throw new Error(`code=${r.code} ${r.message}`);
+        list.push(...(r.data?.list || []).map(a => ({ id: String(a.advertiser_id), name: a.advertiser_name })));
+        if (!r.data?.page_info?.has_more) break;
+        page++;
+      }
+      if (list.length > 0) return list;
+    } catch (e) {
+      console.warn(`[warn] bc/advertiser/list failed: ${e.message}`);
+    }
+  }
+
+  // 3. Explicit IDs fallback
   const explicitIds = (process.env.TIKTOK_ADVERTISER_IDS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
-
   if (explicitIds.length > 0) {
-    console.log(`  Using explicit advertiser IDs (${explicitIds.length})`);
-    const qs = new URLSearchParams({
-      advertiser_ids: JSON.stringify(explicitIds),
-      fields: JSON.stringify(['advertiser_name']),
-    }).toString();
-    const r = await tiktokGet(`/open_api/v1.3/advertiser/info/?${qs}`, accessToken);
-    if (r.code !== 0) {
-      console.warn(`[warn] advertiser/info for names failed: ${r.message}. Using IDs as names.`);
-      return explicitIds.map(id => ({ id, name: id }));
-    }
-    const nameMap = {};
-    for (const adv of r.data?.list || []) nameMap[String(adv.advertiser_id)] = adv.advertiser_name;
-    return explicitIds.map(id => ({ id, name: nameMap[id] || id }));
+    console.log(`  Using explicit TIKTOK_ADVERTISER_IDS (${explicitIds.length})`);
+    return resolveAdvertiserNames(explicitIds, accessToken);
   }
 
-  // BC API fallback
-  const list = [];
-  let page = 1;
-  while (true) {
-    const qs = new URLSearchParams({ bc_id: bcId, page, page_size: 100 }).toString();
-    const r = await tiktokGet(`/open_api/v1.3/bc/advertiser/list/?${qs}`, accessToken);
-    if (r.code !== 0) throw new Error(`bc/advertiser/list: code=${r.code} ${r.message}`);
-    list.push(...(r.data?.list || []).map(a => ({ id: String(a.advertiser_id), name: a.advertiser_name })));
-    if (!r.data?.page_info?.has_more) break;
-    page++;
-  }
-  return list;
+  throw new Error('Cannot get advertiser list. Set TIKTOK_APP_ID+TIKTOK_APP_SECRET, or TIKTOK_ADVERTISER_IDS.');
 }
 
 async function getAdvertiserTimezones(advertisers, accessToken) {

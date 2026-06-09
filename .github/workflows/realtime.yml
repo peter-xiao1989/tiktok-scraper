@@ -29,6 +29,8 @@ jobs:
       - name: Fetch & refresh realtime data
         env:
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_APP_ID:       ${{ secrets.TIKTOK_APP_ID }}
+          TIKTOK_APP_SECRET:   ${{ secrets.TIKTOK_APP_SECRET }}
           TIKTOK_BC_ID:        ${{ secrets.TIKTOK_BC_ID }}
           FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
