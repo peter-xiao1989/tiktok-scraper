@@ -35,3 +35,11 @@ jobs:
           TARGET_DATE:       ${{ github.event.inputs.target_date }}
           DAYS: '1'
         run: npm run bitable-export
+
+      - name: Upload debug screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: login-debug
+          path: data/*.png
+          if-no-files-found: ignore
