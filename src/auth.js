@@ -32,7 +32,10 @@ async function ensureLoggedIn() {
   await page.locator('input[placeholder="Email"]').pressSequentially(EMAIL, { delay: 40 });
   await page.locator('input[placeholder="Password"]').click();
   await page.locator('input[placeholder="Password"]').pressSequentially(PASSWORD, { delay: 40 });
-  await page.locator('button:has-text("Log in")').waitFor({ state: 'enabled', timeout: 10000 });
+  await page.waitForFunction(
+    () => !document.querySelector('button[type="submit"]')?.disabled,
+    { timeout: 10000 }
+  );
   await page.locator('button:has-text("Log in")').click();
   await page.waitForURL(url => !url.toString().includes('/login'), { timeout: 30000 });
 
