@@ -132,15 +132,10 @@ async function getAdvertiserTimezones(advertisers) {
 const DIMENSIONS = ['ad_id', 'stat_time_day'];
 const METRICS = [
   'spend', 'cpm', 'ctr', 'cpc', 'impressions', 'clicks',
-  'conversions', 'cost_per_conversion', 'real_time_roas',
-  'app_install', 'cost_per_install', 'reach_cpm',
-  'gross_impressions',          // 广告曝光事件总数
-  'engaged_view',               // 活跃度
-  'cost_per_engaged_view',      // 活跃度平均成本
-  'engaged_view_rate',          // 广告曝光事件率
-  'cost_per_gross_impressions', // 广告曝光事件平均成本 — verify
-  'total_engaged_view_value',   // 广告曝光总价值
-  'avg_engaged_view_value',     // 广告曝光事件平均价值
+  'result', 'cost_per_conversion',
+  'app_install', 'cost_per_app_install', 'cost_per_1000_reached',
+  'gross_impressions', 'engaged_view',
+  'total_purchase_value',
 ];
 
 async function fetchTodayReport(advertiserId, date, accessToken) {
@@ -181,42 +176,44 @@ function div(a, b) {
 function mapRecord(row, advertiserName, tz, updateTime) {
   const d = row.dimensions || {};
   const m = row.metrics    || {};
-  const gi = m.gross_impressions;
-  const ev = m.engaged_view;
+  const gi  = parseFloat(m.gross_impressions);
+  const ev  = parseFloat(m.engaged_view);
+  const imp = parseFloat(m.impressions);
+
   return {
-    '系列名称':               str(d.campaign_name),              //  1
-    '按天':                   str(d.stat_time_day),              //  2
-    '更新时间':               updateTime,                        //  3 Beijing time
-    '消耗':                   num(m.spend),                      //  4
-    '广告收入 ROAS (TikTok)': num(m.real_time_roas),             //  4
-    '活跃度':                 num(ev),                           //  5
-    '活跃度平均成本':          num(m.cost_per_engaged_view),      //  6
-    '人均广告次数':            div(gi, ev),                       //  7 calculated
-    '点击率（目标页面）':      pct(m.ctr),                        //  8
-    '千次展示成本 (CPM)':     num(m.cpm),                        //  9
-    '平均点击成本（目标页面）': num(m.cpc),                       // 10
-    '创意素材名称':            str(d.ad_name),                   // 11
-    '账户名称':               advertiserName,                    // 12
-    '推广系列预算':            str(d.campaign_budget),           // 13
-    '推广系列类型':            str(d.objective_type),            // 14
-    '广告组名称':              str(d.adgroup_name),              // 15
-    '广告位类型':              str(d.placement_type),            // 16
-    '广告名称':               str(d.ad_name),                   // 17
-    '广告文案':               str(d.ad_text),                   // 18
-    '推广系列预算类型':        str(d.budget_mode || d.campaign_budget_mode), // 19
-    '应用安装数':              num(m.app_install),               // 20
-    '应用安装平均成本':        num(m.cost_per_install),          // 21
-    '点击量（目标页面）':      num(m.clicks),                    // 22
-    '展示量':                 num(m.impressions),               // 23
-    '覆盖千人成本':            num(m.reach_cpm),                 // 24
-    '转化量':                 num(m.conversions),               // 25
-    '平均转化成本':            num(m.cost_per_conversion),       // 26
-    '广告曝光事件率':          pct(m.engaged_view_rate),         // 27
-    '广告曝光事件总数':        num(gi),                          // 28
-    '广告曝光事件平均成本':    num(m.cost_per_gross_impressions),// 29 — verify field name
-    '广告曝光总价值':          num(m.total_engaged_view_value),  // 30
-    '广告曝光事件平均价值':    num(m.avg_engaged_view_value),    // 31
-    '时区':                   tz,                               // 33
+    '系列名称':               str(d.campaign_name),
+    '按天':                   str(d.stat_time_day),
+    '更新时间':               updateTime,
+    '消耗':                   num(m.spend),
+    '广告收入 ROAS (TikTok)': div(m.total_purchase_value, m.spend),
+    '活跃度':                 num(m.engaged_view),
+    '活跃度平均成本':          div(m.spend, m.engaged_view),
+    '人均广告次数':            div(gi, ev),
+    '点击率（目标页面）':      pct(m.ctr),
+    '千次展示成本 (CPM)':     num(m.cpm),
+    '平均点击成本（目标页面）': num(m.cpc),
+    '创意素材名称':            str(d.ad_name),
+    '账户名称':               advertiserName,
+    '推广系列预算':            str(d.campaign_budget),
+    '推广系列类型':            str(d.objective_type),
+    '广告组名称':              str(d.adgroup_name),
+    '广告位类型':              str(d.placement_type),
+    '广告名称':               str(d.ad_name),
+    '广告文案':               str(d.ad_text),
+    '推广系列预算类型':        str(d.budget_mode || d.campaign_budget_mode),
+    '应用安装数':              num(m.app_install),
+    '应用安装平均成本':        num(m.cost_per_app_install),
+    '点击量（目标页面）':      num(m.clicks),
+    '展示量':                 num(m.impressions),
+    '覆盖千人成本':            num(m.cost_per_1000_reached),
+    '转化量':                 num(m.result),
+    '平均转化成本':            num(m.cost_per_conversion),
+    '广告曝光事件率':          !isNaN(ev) && !isNaN(imp) && imp > 0 ? parseFloat((ev / imp * 100).toFixed(4)) + '%' : '',
+    '广告曝光事件总数':        num(m.gross_impressions),
+    '广告曝光事件平均成本':    div(m.spend, m.gross_impressions),
+    '广告曝光总价值':          null,
+    '广告曝光事件平均价值':    null,
+    '时区':                   tz,
   };
 }
 
