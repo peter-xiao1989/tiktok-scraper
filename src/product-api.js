@@ -14,11 +14,23 @@ const https = require('https');
 const { ensureLoggedIn, getCookieHeader } = require('./auth');
 const { scrapeAll } = require('./scraper');
 const { loadGames } = require('./games-loader');
+const { ensureReportFormulas } = require('./build-report');
 
 const SPREADSHEET_TOKEN = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const PRODUCT_SHEET_ID  = 'c50205';
 const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+
+// 41-col header (A–AO) of TT产品数据原表
+const PRODUCT_HEADERS = [
+  '序号', '项目组', '游戏名称', '统计周期', '新增用户', '活跃用户', '重复用户', '有效用户',
+  '总用户数', '总启动次数', '人均进入次数', '每位用户平均时长(分)', '次均游戏时长(分)',
+  '平均启动速度(秒)', '平均首次启动速度(秒)', '启动成功率', '授权成功率', '次留', '7日留存',
+  '14日留存', '30日留存', '广告请求量', '广告曝光量', '广告点击量', '广告点击率', 'eCPM',
+  '人均广告展示次数', '广告总收入', '推荐页_广告支出', '推荐页_已激活用户', '推荐页_付费流量收入',
+  '推荐页_首日激活用户', '推荐页_首日ARPU', '推荐页_首日eCPM', '推荐页_首日LTV', '推荐页_首日ROI',
+  '推荐页_用户激活成本', '推荐页_首日付费收入', '推荐页_历史激活用户', '推荐页_历史eCPM', '推荐页_历史付费收入',
+];
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -50,7 +62,7 @@ function toISO(v) {
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
-// Returns array matching columns A-Z of sheet c50205
+// Returns array matching columns A-AO of sheet c50205 (43 cols)
 function recordToRow(row, seq) {
   return [
     seq,                      // A 序号
@@ -79,6 +91,21 @@ function recordToRow(row, seq) {
     row.广告点击量 ?? '',      // X
     row.广告点击率 ?? '',      // Y
     row.eCPM ?? '',            // Z
+    row.人均广告展示次数 ?? '', // AA
+    row.广告总收入 ?? '',      // AB
+    row['推荐页_广告支出'] ?? '',      // AC
+    row['推荐页_已激活用户'] ?? '',    // AD
+    row['推荐页_付费流量收入'] ?? '',  // AE
+    row['推荐页_首日激活用户'] ?? '',  // AF
+    row['推荐页_首日ARPU'] ?? '',      // AG
+    row['推荐页_首日eCPM'] ?? '',      // AH
+    row['推荐页_首日LTV'] ?? '',       // AI
+    row['推荐页_首日ROI'] ?? '',       // AJ
+    row['推荐页_用户激活成本'] ?? '',  // AK
+    row['推荐页_首日付费收入'] ?? '',  // AL
+    row['推荐页_历史激活用户'] ?? '',  // AM
+    row['推荐页_历史eCPM'] ?? '',      // AN
+    row['推荐页_历史付费收入'] ?? '',  // AO
   ];
 }
 
@@ -157,7 +184,7 @@ async function appendRows(rows, token) {
     const r = await feishuReq('POST',
       `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_append`,
       token, {
-        valueRange: { range: `${PRODUCT_SHEET_ID}!A1:Z${chunk.length}`, values: chunk },
+        valueRange: { range: `${PRODUCT_SHEET_ID}!A1:AO${chunk.length}`, values: chunk },
         insertDataOption: 'INSERT_ROWS',
       });
     if (r.code !== 0) throw new Error(`values_append: ${JSON.stringify(r)}`);
@@ -165,6 +192,34 @@ async function appendRows(rows, token) {
     process.stdout.write(`\r  written ${written}/${rows.length}...`);
   }
   process.stdout.write('\n');
+}
+
+// Delete all data rows (2+), keeping the header row.
+async function clearSheetData(token) {
+  const r = await feishuReq('GET',
+    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/query`, token);
+  const sheet = (r.data?.sheets || []).find(s => s.sheet_id === PRODUCT_SHEET_ID);
+  const rowCount = sheet?.grid_properties?.row_count || 1;
+  if (rowCount <= 1) { console.log('  Sheet already empty.'); return; }
+  let remaining = rowCount - 1;
+  let deleted = 0;
+  while (remaining > 0) {
+    const chunk = Math.min(remaining, 5000);
+    const cr = await feishuReq('DELETE',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+      { dimension: { sheetId: PRODUCT_SHEET_ID, majorDimension: 'ROWS', startIndex: 1, endIndex: chunk } });
+    if (cr.code !== 0) throw new Error('dimension_range delete failed: ' + JSON.stringify(cr));
+    deleted += cr.data?.delCount || chunk;
+    remaining -= chunk;
+    process.stdout.write(`\r  Deleted ${deleted} data rows...`);
+  }
+  process.stdout.write('\n');
+  // Rewrite header to row 1 (delete can leave row 1 holding a stray data row)
+  const hw = await feishuReq('PUT',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+    { valueRange: { range: `${PRODUCT_SHEET_ID}!A1:AO1`, values: [PRODUCT_HEADERS] } });
+  if (hw.code !== 0) throw new Error('write headers failed: ' + JSON.stringify(hw));
+  console.log('  Headers written to row 1.');
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -186,6 +241,11 @@ async function main() {
   console.log(`Date range: ${start} → ${end} (${dates.length} days)`);
 
   const feishuToken = await getFeishuToken();
+
+  if (process.env.CLEAR_BEFORE === 'true') {
+    console.log('Clearing product sheet data...');
+    await clearSheetData(feishuToken);
+  }
 
   console.log('Loading existing keys for dedup...');
   const existingKeys = await getExistingKeys(feishuToken);
@@ -220,10 +280,22 @@ async function main() {
     }
   }
 
-  if (!allRows.length) { console.log('\nNothing to write.'); return; }
+  if (allRows.length) {
+    console.log(`\nWriting ${allRows.length} rows...`);
+    await appendRows(allRows, feishuToken);
+  } else {
+    console.log('\nNo new product rows.');
+  }
 
-  console.log(`\nWriting ${allRows.length} rows...`);
-  await appendRows(allRows, feishuToken);
+  // Maintain 产品经营日报表 formulas (reverse-mirror + 200-row buffer).
+  // Runs at 16:00 right after product data lands, so report rows for the new
+  // day appear and pick up the morning's 投放 data via formula.
+  try {
+    console.log('Maintaining 产品经营日报表...');
+    await ensureReportFormulas(feishuToken);
+  } catch (e) {
+    console.warn(`[warn] report maintenance: ${e.message}`);
+  }
   console.log('Done.');
 }
 

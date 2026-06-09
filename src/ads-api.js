@@ -502,11 +502,26 @@ async function main() {
     }
   }
 
-  if (!allRows.length) { console.log('Nothing to write.'); return; }
+  if (!allRows.length) { console.log('Nothing to write.'); await setRoasFormat(feishuToken); return; }
 
   console.log(`Writing ${allRows.length} rows...`);
   await appendRows(allRows, feishuToken);
+  await setRoasFormat(feishuToken);
   console.log('Done.');
+}
+
+// Set ROAS columns (F, AQ:AS) to percent format over current data rows.
+async function setRoasFormat(token) {
+  const r = await feishuReq('GET',
+    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/query`, token);
+  const sheet = (r.data?.sheets || []).find(s => s.sheet_id === ADS_SHEET_ID);
+  const rc = sheet?.grid_properties?.row_count || 1;
+  if (rc < 2) return;
+  for (const range of [`${ADS_SHEET_ID}!F2:F${rc}`, `${ADS_SHEET_ID}!AQ2:AS${rc}`]) {
+    const s = await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/style`,
+      token, { appendStyle: { range, style: { formatter: '0.00%' } } });
+    if (s.code !== 0) console.warn(`  [warn] ROAS fmt ${range}: ${s.msg}`);
+  }
 }
 
 main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });

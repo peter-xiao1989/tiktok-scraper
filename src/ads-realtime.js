@@ -430,7 +430,18 @@ async function main() {
 
   console.log(`Writing ${allRows.length} rows...`);
   await writeDataRows(allRows, currentRowCount, feishuToken);
+  await setRoasFormat(feishuToken, allRows.length + 1);
   console.log('Done.');
+}
+
+// Set ROAS columns (F, AQ:AS) to percent format over the written data rows.
+async function setRoasFormat(token, lastRow) {
+  if (lastRow < 2) return;
+  for (const range of [`${REALTIME_SHEET_ID}!F2:F${lastRow}`, `${REALTIME_SHEET_ID}!AQ2:AS${lastRow}`]) {
+    const s = await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/style`,
+      token, { appendStyle: { range, style: { formatter: '0.00%' } } });
+    if (s.code !== 0) console.warn(`  [warn] ROAS fmt ${range}: ${s.msg}`);
+  }
 }
 
 main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });
