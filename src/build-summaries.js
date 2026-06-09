@@ -276,6 +276,109 @@ async function ensureProjectSummary(token) {
   return targetRow;
 }
 
+// ─── 投放日表-产品维度 (kX0M0R) ─────────────────────────────────────────────
+// One row per (day × game) from 投放数据原表 (ad-level → deduped to game-level),
+// sorted by a composite key DATEVALUE(date)*1e7 + game-day 消耗, descending, so
+// newest day is on top and within a day higher 消耗 is on top. 消耗=0 excluded.
+
+const AD_PRODUCT_SHEET_ID = 'kX0M0R';
+
+// Scan 投放数据原表 → ad row count + count of (date|game) with positive spend.
+async function getAdProductInfo(token) {
+  const spend = {};
+  let rowCount = 0, startRow = 2;
+  while (true) {
+    const r = await feishuReq('GET',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/uqJEhq!B${startRow}:E${startRow + 499}`, token);
+    const rows = r.data?.valueRange?.values || [];
+    if (!rows.length) break;
+    let has = false;
+    for (const row of rows) {
+      const g = row[0], d = row[2], e = parseFloat(row[3]) || 0;
+      if (g && d) { has = true; rowCount++; const k = `${d}|${g}`; spend[k] = (spend[k] || 0) + e; }
+    }
+    if (!has || rows.length < 500) break;
+    startRow += 500;
+  }
+  const posCount = Object.values(spend).filter(v => v > 0).length;
+  return { adRowCount: rowCount, posCount };
+}
+
+async function ensureAdProductSummary(token) {
+  const header = await readHeader(token, AD_PRODUCT_SHEET_ID);
+  const L = {};
+  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
+  const need = n => { if (!L[n]) throw new Error(`投放日表-产品维度缺少表头: ${n}`); return L[n]; };
+  const seqCol = need('序号'), dateCol = need('按天'), grpCol = need('项目组'), gameCol = need('游戏名称'),
+        spendCol = need('消耗'), roasCol = need('广告收入 ROAS (TikTok)'), acostCol = need('活跃度平均成本'),
+        actCol = need('活跃度'), apcCol = need('人均广告次数');
+
+  const { adRowCount, posCount } = await getAdProductInfo(token);
+  const helperRows = adRowCount + 1 + 500;     // covers ad rows + growth
+  const mainRows = posCount + 1 + 150;          // visible rows + buffer
+  console.log(`  投放日表-产品维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
+
+  // 投放数据原表 ranges
+  const AB = `${ADS}!$B$2:$B$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
+        AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AAD = `${ADS}!$AD$2:$AD$5000`;
+  // hidden helper columns: T isFirst, U gameDaySpend, V key, W matchedRow
+  const T = 'T', U = 'U', V = 'V', W = 'W';
+
+  // helper formulas over ad rows (row i ↔ 投放 row i)
+  const helperPlan = {
+    [T]: i => `=IF(${ADS}!$B${i}="","",IF(COUNTIFS(${ADS}!$B$2:$B${i},${ADS}!$B${i},${ADS}!$D$2:$D${i},${ADS}!$D${i})=1,1,0))`,
+    [U]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i}))`,
+    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*10000000+$${U}${i},"")`,
+  };
+  // main formulas (row r): W=matched ad row via LARGE on key column
+  const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
+  const g = r => `$${gameCol}${r}`, dt = r => `$${dateCol}${r}`;
+  const ifg = (r, body) => `=IF(${g(r)}="","",${body})`;
+  const mainPlan = {
+    [W]: r => `=IFERROR(MATCH(LARGE(${VR},ROW()-1),${VR},0),"")`,
+    [gameCol]: r => `=IF($${W}${r}="","",INDEX(${AB},$${W}${r}))`,
+    [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
+    [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
+    [seqCol]: r => `=IF(${g(r)}="","",ROW()-1)`,
+    [grpCol]: r => ifg(r, `IFERROR(INDEX(${PROD}!$B$2:$B$5000,MATCH(${g(r)},${PROD}!$C$2:$C$5000,0)),"")`),
+    [actCol]: r => ifg(r, `SUMIFS(${AG},${AB},${g(r)},${AD},${dt(r)})`),
+    [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/$${actCol}${r},"")`),
+    [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
+    [apcCol]: r => ifg(r, `IFERROR(SUMIFS(${AAD},${AB},${g(r)},${AD},${dt(r)})/$${actCol}${r},"")`),
+  };
+
+  // write helper columns (rows 2..helperRows)
+  await writeCols(token, AD_PRODUCT_SHEET_ID, helperPlan, helperRows);
+  // write main columns (rows 2..mainRows)
+  await writeCols(token, AD_PRODUCT_SHEET_ID, mainPlan, mainRows);
+  // formats: date col, ROAS percent
+  await applyFormats(token, AD_PRODUCT_SHEET_ID, mainRows, dateCol, [roasCol]);
+  // hide helper columns T..W (index 19..22)
+  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+    { dimension: { sheetId: AD_PRODUCT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
+      dimensionProperties: { visible: false } }).catch(() => {});
+  return mainRows;
+}
+
+// Write a {col: gen(r)} plan over rows 2..targetRow in batches.
+async function writeCols(token, sheetId, plan, targetRow) {
+  for (const [col, gen] of Object.entries(plan)) {
+    const values = [];
+    for (let r = 2; r <= targetRow; r++) values.push([{ type: 'formula', text: gen(r) }]);
+    const BATCH = 300;
+    for (let i = 0; i < values.length; i += BATCH) {
+      const chunk = values.slice(i, i + BATCH);
+      const startR = 2 + i, endR = startR + chunk.length - 1;
+      const res = await feishuReq('PUT',
+        `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+        { valueRange: { range: `${sheetId}!${col}${startR}:${col}${endR}`, values: chunk } });
+      if (res.code !== 0) throw new Error(`write ${col}${startR}: ${JSON.stringify(res)}`);
+    }
+    process.stdout.write(`\r  col ${col} done`);
+  }
+  process.stdout.write('\n');
+}
+
 async function main() {
   const token = await getFeishuToken();
   const which = process.env.ONLY || 'all';
@@ -289,10 +392,15 @@ async function main() {
     const t = await ensureProjectSummary(token);
     console.log(`  done, row ${t}.`);
   }
+  if (which === 'all' || which === 'adproduct') {
+    console.log('Building 投放日表-产品维度...');
+    const t = await ensureAdProductSummary(token);
+    console.log(`  done, row ${t}.`);
+  }
 }
 
 if (require.main === module) {
   main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });
 }
 
-module.exports = { ensureDailySummary, ensureProjectSummary, getFeishuToken };
+module.exports = { ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, getFeishuToken };
