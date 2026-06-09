@@ -523,6 +523,89 @@ async function ensureAdMaterialSummary(token) {
   return mainRows;
 }
 
+// ─── 投放日表-出价维度 (2zDzau) ─────────────────────────────────────────────
+// One row per (day × game × 出价方式), deduped from ad-level 投放数据原表, sorted
+// by DATEVALUE(date)*1e7 + (game,bid)-day 消耗 desc. 消耗=0 excluded. 项目组 via
+// game→group (product + extra map).
+
+const AD_BID_SHEET_ID = '2zDzau';
+
+async function getAdBidInfo(token) {
+  const spend = {};
+  let rowCount = 0, startRow = 2;
+  while (true) {
+    const r = await feishuReq('GET',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/uqJEhq!B${startRow}:AT${startRow + 499}`, token);
+    const rows = r.data?.valueRange?.values || [];
+    if (!rows.length) break;
+    let has = false;
+    for (const row of rows) {
+      const g = row[0], d = row[2], e = parseFloat(row[3]) || 0, bid = row[44]; // B=0 D=2 E=3 AT=45→idx44
+      if (g && d && bid) { has = true; rowCount++; const k = `${d}|${g}|${bid}`; spend[k] = (spend[k] || 0) + e; }
+    }
+    if (!has || rows.length < 500) break;
+    startRow += 500;
+  }
+  return { adRowCount: rowCount, posCount: Object.values(spend).filter(v => v > 0).length };
+}
+
+async function ensureAdBidSummary(token) {
+  const header = await readHeader(token, AD_BID_SHEET_ID);
+  const L = {};
+  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
+  const need = (...names) => { for (const n of names) if (L[n]) return L[n]; throw new Error(`投放日表-出价维度缺少表头: ${names.join('/')}`); };
+  const seqCol = need('序号'), dateCol = need('按天'), grpCol = need('项目组'), gameCol = need('游戏名称'),
+        bidCol = need('出价方式'), spendCol = need('消耗'), roasCol = need('广告收入 ROAS (TikTok)'),
+        acostCol = need('活跃度平均成本'), actCol = need('活跃度'), apcCol = need('人均广告次数');
+
+  const { adRowCount, posCount } = await getAdBidInfo(token);
+  const { gameToGroup } = await getGroupMapping(token);
+  const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
+  const mapGames = Object.keys(fullMap);
+  const gamesArr = `{${mapGames.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
+  const groupsArr = `{${mapGames.map(x => `"${fullMap[x]}"`).join(',')}}`;
+  const helperRows = adRowCount + 1 + 500;
+  const mainRows = posCount + 1 + 200;
+  console.log(`  投放日表-出价维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
+
+  const AB = `${ADS}!$B$2:$B$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
+        AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AAD = `${ADS}!$AD$2:$AD$5000`,
+        AAT = `${ADS}!$AT$2:$AT$5000`;
+  const T = 'T', U = 'U', V = 'V', W = 'W';
+  const helperPlan = {
+    [T]: i => `=IF(${ADS}!$B${i}="","",IF(COUNTIFS(${ADS}!$B$2:$B${i},${ADS}!$B${i},${ADS}!$D$2:$D${i},${ADS}!$D${i},${ADS}!$AT$2:$AT${i},${ADS}!$AT${i})=1,1,0))`,
+    [U]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i},${AAT},${ADS}!$AT${i}))`,
+    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*10000000+$${U}${i},"")`,
+  };
+  const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
+  const g = r => `$${gameCol}${r}`, dt = r => `$${dateCol}${r}`, bd = r => `$${bidCol}${r}`;
+  const ifg = (r, body) => `=IF(${g(r)}="","",${body})`;
+  // SUMIFS keyed on game + date + 出价方式
+  const sif = (range, r) => `SUMIFS(${range},${AB},${g(r)},${AD},${dt(r)},${AAT},${bd(r)})`;
+  const mainPlan = {
+    [W]: r => `=IFERROR(MATCH(LARGE(${VR},ROW()-1),${VR},0),"")`,
+    [gameCol]: r => `=IF($${W}${r}="","",INDEX(${AB},$${W}${r}))`,
+    [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
+    [bidCol]: r => `=IF($${W}${r}="","",INDEX(${AAT},$${W}${r}))`,
+    [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
+    [seqCol]: r => `=IF(${g(r)}="","",ROW()-1)`,
+    [grpCol]: r => ifg(r, `IFERROR(INDEX(${groupsArr},MATCH(${g(r)},${gamesArr},0)),"")`),
+    [actCol]: r => ifg(r, sif(AG, r)),
+    [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/${sif(AG, r)},"")`),
+    [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(${AAT}=${bd(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
+    [apcCol]: r => ifg(r, `IFERROR(${sif(AAD, r)}/${sif(AG, r)},"")`),
+  };
+
+  wrapDecimals(mainPlan, header);
+  await writeCols(token, AD_BID_SHEET_ID, helperPlan, helperRows);
+  await writeCols(token, AD_BID_SHEET_ID, mainPlan, mainRows);
+  await applyColumnFormats(token, AD_BID_SHEET_ID, header, mainRows);
+  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+    { dimension: { sheetId: AD_BID_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
+      dimensionProperties: { visible: false } }).catch(() => {});
+  return mainRows;
+}
+
 async function main() {
   const token = await getFeishuToken();
   const which = process.env.ONLY || 'all';
@@ -546,6 +629,11 @@ async function main() {
     const t = await ensureAdMaterialSummary(token);
     console.log(`  done, row ${t}.`);
   }
+  if (which === 'all' || which === 'adbid') {
+    console.log('Building 投放日表-出价维度...');
+    const t = await ensureAdBidSummary(token);
+    console.log(`  done, row ${t}.`);
+  }
 }
 
 if (require.main === module) {
@@ -554,5 +642,6 @@ if (require.main === module) {
 
 module.exports = {
   ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary,
+  ensureAdBidSummary,
   getFeishuToken, getGroupMapping, EXTRA_GROUP_MAP, applyColumnFormats, wrapDecimals,
 };

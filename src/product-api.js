@@ -15,7 +15,7 @@ const { ensureLoggedIn, getCookieHeader } = require('./auth');
 const { scrapeAll } = require('./scraper');
 const { loadGames } = require('./games-loader');
 const { ensureReportFormulas } = require('./build-report');
-const { ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary } = require('./build-summaries');
+const { ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary, ensureAdBidSummary } = require('./build-summaries');
 
 const SPREADSHEET_TOKEN = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const PRODUCT_SHEET_ID  = 'c50205';
@@ -320,6 +320,12 @@ async function main() {
     await ensureAdMaterialSummary(feishuToken);
   } catch (e) {
     console.warn(`[warn] ad-material summary maintenance: ${e.message}`);
+  }
+  try {
+    console.log('Maintaining 投放日表-出价维度...');
+    await ensureAdBidSummary(feishuToken);
+  } catch (e) {
+    console.warn(`[warn] ad-bid summary maintenance: ${e.message}`);
   }
   console.log('Done.');
 }
