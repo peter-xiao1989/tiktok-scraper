@@ -227,8 +227,9 @@ async function ensureReportFormulas(token) {
   // headers for helper cols U(_srcN) V(_show) W(_key)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
     { valueRange: { range: `${REPORT_SHEET_ID}!U1:W1`, values: [['_srcN', '_show', '_key']] } });
+  const { applyColumnFormats } = require('./build-summaries');
   await writeFormulas(token, targetRow, plan);
-  await applyFormats(token, targetRow, dateCol, roasCol, intCols);
+  await applyColumnFormats(token, REPORT_SHEET_ID, header, targetRow);
   await applyFilter(token, targetRow);
   await hideHelperCols(token);
   return targetRow;

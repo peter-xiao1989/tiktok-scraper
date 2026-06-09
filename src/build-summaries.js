@@ -147,17 +147,33 @@ async function writeFormulas(token, sheetId, targetRow, plan) {
   process.stdout.write('\n');
 }
 
-async function applyFormats(token, sheetId, targetRow, dateCol, roasCols) {
-  const setFmt = (range, formatter) => feishuReq('PUT',
-    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/style`, token,
-    { appendStyle: { range, style: { formatter } } });
-  if (dateCol) {
-    const r = await setFmt(`${sheetId}!${dateCol}2:${dateCol}${targetRow}`, 'yyyy/MM/dd');
-    if (r.code !== 0) console.warn('  [warn] date fmt:', JSON.stringify(r).slice(0, 120));
-  }
-  for (const c of roasCols) {
-    const r = await setFmt(`${sheetId}!${c}2:${c}${targetRow}`, '0.00%');
-    if (r.code !== 0) console.warn(`  [warn] roas fmt ${c}:`, JSON.stringify(r).slice(0, 120));
+// Feishu only supports 0/2-decimal number & percent formats (1-decimal rejected).
+// Counts → integer, ROAS/ROI/率 → percent(2), dates → date, everything else → 2dp.
+const FMT_INT_NAMES = new Set([
+  '序号', '新增用户', '活跃用户', '重复用户', '有效用户', '总用户数', '总启动次数',
+  '展示量', '点击量（目标页面）', '广告请求量', '广告曝光量', '转化量', '应用安装数',
+  '活跃度', '广告曝光事件总数', '总打开次数', '去重打开次数',
+]);
+const FMT_DATE_NAMES = new Set(['统计周期', '按天', '更新时间']);
+const FMT_PCT_NAMES = new Set(['次留', '7日留存', '14日留存', '30日留存']);
+function formatterFor(name) {
+  const n = (name || '').trim();
+  if (FMT_DATE_NAMES.has(n)) return 'yyyy/MM/dd';
+  if (/ROAS|ROI|率/.test(n) || FMT_PCT_NAMES.has(n)) return '0.00%';
+  if (FMT_INT_NAMES.has(n)) return '#,##0';
+  return '#,##0.00';
+}
+
+// Apply per-column number formats by header name (idempotent; re-run daily so
+// formatting is permanent and never lost when formulas are rewritten).
+async function applyColumnFormats(token, sheetId, header, targetRow) {
+  for (let j = 0; j < header.length; j++) {
+    const name = header[j];
+    if (!name) continue;
+    const col = colLetter(j + 1);
+    const r = await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/style`, token,
+      { appendStyle: { range: `${sheetId}!${col}2:${col}${targetRow}`, style: { formatter: formatterFor(name) } } });
+    if (r.code !== 0) console.warn(`  [warn] fmt ${col}(${name}):`, JSON.stringify(r).slice(0, 100));
   }
 }
 
@@ -168,7 +184,7 @@ async function ensureDailySummary(token) {
   const targetRow = dayCount + 1 + ROW_BUFFER;
   console.log(`  日经营数据汇总: ${dayCount} 天 (serial ${minSerial}..${maxSerial}), 填充 2..${targetRow}`);
   await writeFormulas(token, SUMMARY_SHEET_ID, targetRow, plan);
-  await applyFormats(token, SUMMARY_SHEET_ID, targetRow, dateCol, roasCols);
+  await applyColumnFormats(token, SUMMARY_SHEET_ID, header, targetRow);
   return targetRow;
 }
 
@@ -282,7 +298,7 @@ async function ensureProjectSummary(token) {
   plan[iCol] = r => ifGrp(r, `SUMIFS(${PE},${PB},$${aCol}${r},${PD},${dtxt(r)})`);        // 新增用户
 
   await writeFormulas(token, PROJECT_SHEET_ID, targetRow, plan);
-  await applyFormats(token, PROJECT_SHEET_ID, targetRow, bCol, [eCol, hCol]);
+  await applyColumnFormats(token, PROJECT_SHEET_ID, header, targetRow);
   // hide helper columns (today/cum/key spend + pos)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
     { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: KEY0 + N },
@@ -371,7 +387,7 @@ async function ensureAdProductSummary(token) {
   // write main columns (rows 2..mainRows)
   await writeCols(token, AD_PRODUCT_SHEET_ID, mainPlan, mainRows);
   // formats: date col, ROAS percent
-  await applyFormats(token, AD_PRODUCT_SHEET_ID, mainRows, dateCol, [roasCol]);
+  await applyColumnFormats(token, AD_PRODUCT_SHEET_ID, header, mainRows);
   // hide helper columns T..W (index 19..22)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
     { dimension: { sheetId: AD_PRODUCT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
@@ -475,7 +491,7 @@ async function ensureAdMaterialSummary(token) {
 
   await writeCols(token, AD_MATERIAL_SHEET_ID, helperPlan, helperRows);
   await writeCols(token, AD_MATERIAL_SHEET_ID, mainPlan, mainRows);
-  await applyFormats(token, AD_MATERIAL_SHEET_ID, mainRows, dateCol, [roasCol, ctrCol]);
+  await applyColumnFormats(token, AD_MATERIAL_SHEET_ID, header, mainRows);
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
     { dimension: { sheetId: AD_MATERIAL_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
       dimensionProperties: { visible: false } }).catch(() => {});
@@ -513,5 +529,5 @@ if (require.main === module) {
 
 module.exports = {
   ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary,
-  getFeishuToken, getGroupMapping, EXTRA_GROUP_MAP,
+  getFeishuToken, getGroupMapping, EXTRA_GROUP_MAP, applyColumnFormats,
 };
