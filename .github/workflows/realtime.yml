@@ -70,7 +70,9 @@ jobs:
           LARK_AS_BOT: "1"
         run: python3 sheets_to_base.py fenshi
 
+      # 发群暂停(等报告样式优化后恢复):删除下方 if 即恢复发送
       - name: Render & send 分时报告到选品群
+        if: ${{ false }}
         env:
           LARK_AS_BOT: "1"
         run: |
