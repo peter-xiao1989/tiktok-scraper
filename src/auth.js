@@ -28,10 +28,13 @@ async function ensureLoggedIn() {
   const page = await context.newPage();
 
   await page.goto(`${BASE}/login`, { waitUntil: 'load', timeout: 30000 });
-  await page.locator('input[placeholder="Email"]').fill(EMAIL);
-  await page.locator('input[placeholder="Password"]').fill(PASSWORD);
+  await page.locator('input[placeholder="Email"]').click();
+  await page.locator('input[placeholder="Email"]').pressSequentially(EMAIL, { delay: 40 });
+  await page.locator('input[placeholder="Password"]').click();
+  await page.locator('input[placeholder="Password"]').pressSequentially(PASSWORD, { delay: 40 });
+  await page.locator('button:has-text("Log in")').waitFor({ state: 'enabled', timeout: 10000 });
   await page.locator('button:has-text("Log in")').click();
-  await page.waitForURL(url => !url.toString().includes('/login'), { timeout: 15000 });
+  await page.waitForURL(url => !url.toString().includes('/login'), { timeout: 30000 });
 
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   await context.storageState({ path: STATE_FILE });
