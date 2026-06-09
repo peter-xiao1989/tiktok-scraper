@@ -37,7 +37,16 @@ async function ensureLoggedIn() {
     { timeout: 10000 }
   );
   await page.locator('button:has-text("Log in")').click();
-  await page.waitForURL(url => !url.toString().includes('/login'), { timeout: 30000 });
+  try {
+    await page.waitForURL(url => !url.toString().includes('/login'), { timeout: 60000 });
+  } catch (e) {
+    const screenshotPath = path.join(__dirname, '../data/login-failure.png');
+    fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    const currentUrl = page.url();
+    await browser.close();
+    throw new Error(`Login redirect timeout. URL: ${currentUrl}. Screenshot: ${screenshotPath}`);
+  }
 
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   await context.storageState({ path: STATE_FILE });
