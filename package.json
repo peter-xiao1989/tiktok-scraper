@@ -11,7 +11,8 @@
     "bitable-export": "node src/bitable-export.js",
     "excel-import": "node src/excel-import.js",
     "ads-api": "node src/ads-api.js",
-    "ads-realtime": "node src/ads-realtime.js"
+    "ads-realtime": "node src/ads-realtime.js",
+    "diag": "node src/diag.js"
   },
   "keywords": [],
   "author": "",

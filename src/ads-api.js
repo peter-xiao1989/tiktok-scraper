@@ -61,16 +61,18 @@ function tiktokGet(path, accessToken) {
   });
 }
 
-async function resolveAdvertiserNames(ids, accessToken) {
+async function resolveAdvertiserInfo(ids, accessToken) {
   const qs = new URLSearchParams({
     advertiser_ids: JSON.stringify(ids),
-    fields: JSON.stringify(['advertiser_name']),
+    fields: JSON.stringify(['advertiser_id', 'name', 'timezone']),
   }).toString();
   const r = await tiktokGet(`/open_api/v1.3/advertiser/info/?${qs}`, accessToken);
-  if (r.code !== 0) return ids.map(id => ({ id, name: id }));
-  const nameMap = {};
-  for (const adv of r.data?.list || []) nameMap[String(adv.advertiser_id)] = adv.advertiser_name;
-  return ids.map(id => ({ id, name: nameMap[id] || id }));
+  if (r.code !== 0) return ids.map(id => ({ id, name: id, offsetHours: 8 }));
+  const infoMap = {};
+  for (const adv of r.data?.list || []) {
+    infoMap[String(adv.advertiser_id)] = { name: adv.name, offsetHours: parseOffsetHours(adv.timezone) };
+  }
+  return ids.map(id => ({ id, name: infoMap[id]?.name || id, offsetHours: infoMap[id]?.offsetHours ?? 8 }));
 }
 
 async function getAdvertisers(bcId, accessToken) {
@@ -82,9 +84,11 @@ async function getAdvertisers(bcId, accessToken) {
     const qs = new URLSearchParams({ app_id: appId, secret: appSecret, access_token: accessToken }).toString();
     const r = await tiktokGet(`/open_api/v1.3/oauth2/advertiser/get/?${qs}`, accessToken);
     if (r.code === 0) {
-      const ids = (r.data?.list || []).map(String);
-      console.log(`  oauth2/advertiser/get → ${ids.length} advertisers`);
-      return resolveAdvertiserNames(ids, accessToken);
+      const list = r.data?.list || [];
+      console.log(`  oauth2/advertiser/get → ${list.length} advertisers`);
+      // response has advertiser_id + advertiser_name; enrich with timezone via advertiser/info
+      const ids = list.map(a => String(a.advertiser_id));
+      return resolveAdvertiserInfo(ids, accessToken);
     }
     console.warn(`[warn] oauth2/advertiser/get: code=${r.code} ${r.message}`);
   }
@@ -92,17 +96,17 @@ async function getAdvertisers(bcId, accessToken) {
   // 2. BC advertiser list
   if (bcId) {
     try {
-      const list = [];
+      const ids = [];
       let page = 1;
       while (true) {
         const qs = new URLSearchParams({ bc_id: bcId, page, page_size: 100 }).toString();
         const r = await tiktokGet(`/open_api/v1.3/bc/advertiser/list/?${qs}`, accessToken);
         if (r.code !== 0) throw new Error(`code=${r.code} ${r.message}`);
-        list.push(...(r.data?.list || []).map(a => ({ id: String(a.advertiser_id), name: a.advertiser_name })));
+        ids.push(...(r.data?.list || []).map(a => String(a.advertiser_id)));
         if (!r.data?.page_info?.has_more) break;
         page++;
       }
-      if (list.length > 0) return list;
+      if (ids.length > 0) return resolveAdvertiserInfo(ids, accessToken);
     } catch (e) {
       console.warn(`[warn] bc/advertiser/list failed: ${e.message}`);
     }
@@ -113,26 +117,16 @@ async function getAdvertisers(bcId, accessToken) {
     .split(',').map(s => s.trim()).filter(Boolean);
   if (explicitIds.length > 0) {
     console.log(`  Using explicit TIKTOK_ADVERTISER_IDS (${explicitIds.length})`);
-    return resolveAdvertiserNames(explicitIds, accessToken);
+    return resolveAdvertiserInfo(explicitIds, accessToken);
   }
 
   throw new Error('Cannot get advertiser list. Set TIKTOK_APP_ID+TIKTOK_APP_SECRET, or TIKTOK_ADVERTISER_IDS.');
 }
 
-async function getAdvertiserTimezones(advertisers, accessToken) {
-  const qs = new URLSearchParams({
-    advertiser_ids: JSON.stringify(advertisers.map(a => a.id)),
-    fields: JSON.stringify(['timezone']),
-  }).toString();
-  const r = await tiktokGet(`/open_api/v1.3/advertiser/info/?${qs}`, accessToken);
-  if (r.code !== 0) {
-    console.warn(`[warn] advertiser/info failed: ${r.message}. Defaulting to GMT+8.`);
-    return {};
-  }
+async function getAdvertiserTimezones(advertisers) {
+  // timezone already resolved in getAdvertisers via resolveAdvertiserInfo
   const map = {};
-  for (const adv of r.data?.list || []) {
-    map[String(adv.advertiser_id)] = parseOffsetHours(adv.timezone);
-  }
+  for (const adv of advertisers) map[adv.id] = adv.offsetHours ?? 8;
   return map;
 }
 
@@ -302,7 +296,7 @@ async function main() {
   const advertisers = await getAdvertisers(bcId, accessToken);
   console.log(`  ${advertisers.length} advertisers`);
 
-  const tzMap = await getAdvertiserTimezones(advertisers, accessToken);
+  const tzMap = await getAdvertiserTimezones(advertisers);
 
   const allRecords = [];
   for (const adv of advertisers) {
