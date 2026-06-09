@@ -45,3 +45,21 @@ jobs:
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
           TARGET_DATE:         ${{ github.event.inputs.target_date }}
         run: npm run ads-realtime
+
+      - name: Setup lark-cli
+        run: |
+          npm install -g @larksuite/cli
+          echo "${{ secrets.FEISHU_APP_SECRET }}" | lark-cli config init \
+            --app-id "${{ secrets.FEISHU_APP_ID }}" \
+            --app-secret-stdin \
+            --brand feishu
+
+      - name: Rebuild 分时同步数据汇总
+        env:
+          LARK_AS_BOT: "1"
+        run: python3 rebuild_fenshi_summary.py
+
+      - name: Rebuild 分时素材效果表
+        env:
+          LARK_AS_BOT: "1"
+        run: python3 rebuild_sucai_effect.py
