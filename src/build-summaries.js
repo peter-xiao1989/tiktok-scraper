@@ -171,15 +171,128 @@ async function ensureDailySummary(token) {
   return targetRow;
 }
 
+// ─── 项目维度经营表 (JIKPZV) ────────────────────────────────────────────────
+// One row per (day × 项目组); within a day, 项目组 sorted by 消耗 descending.
+// Helper columns hold each fixed group's daily/cumulative 消耗; the visible
+// columns pick the rank-th highest via LARGE/MATCH. 产品 metrics use 产品表's
+// 项目组 column directly; 投放 metrics map game→group via array MATCH.
+
+const PROJECT_SHEET_ID = 'JIKPZV';
+
+// Read 产品数据原表 B(项目组) C(游戏) → ordered groups + group→games map.
+async function getGroupMapping(token) {
+  const groups = [];
+  const groupGames = {};
+  let startRow = 2;
+  while (true) {
+    const r = await feishuReq('GET',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/c50205!B${startRow}:C${startRow + 499}`, token);
+    const rows = r.data?.valueRange?.values || [];
+    if (!rows.length) break;
+    let has = false;
+    for (const row of rows) {
+      const grp = row[0], game = row[1];
+      if (grp && game) {
+        has = true;
+        if (!groupGames[grp]) { groupGames[grp] = []; groups.push(grp); }
+        if (!groupGames[grp].includes(game)) groupGames[grp].push(game);
+      }
+    }
+    if (!has || rows.length < 500) break;
+    startRow += 500;
+  }
+  return { groups, groupGames };
+}
+
+async function ensureProjectSummary(token) {
+  const header = await readHeader(token, PROJECT_SHEET_ID);
+  const L = {};
+  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
+  const need = n => { if (!L[n]) throw new Error(`项目维度经营表缺少表头: ${n}`); return L[n]; };
+  const aCol = need('项目组'), bCol = need('统计周期'), cCol = need('消耗'), dCol = need('广告总收入'),
+        eCol = need('当日广告收入 ROAS (TikTok)'), fCol = need('累计消耗'), gCol = need('累计收入'),
+        hCol = need('TT累计ROI'), iCol = need('新增用户');
+
+  const { dayCount, maxSerial, minSerial } = await getProductDateInfo(token);
+  const { groups, groupGames } = await getGroupMapping(token);
+  const N = groups.length;
+  if (N === 0) throw new Error('无项目组');
+  const targetRow = dayCount * N + 1 + ROW_BUFFER;
+  console.log(`  项目维度经营表: ${dayCount} 天 × ${N} 组, 填充 2..${targetRow}`);
+
+  // helper columns: today spend (N) then cumulative spend (N), starting at col 18 (R)
+  const TODAY0 = 18;                       // R
+  const CUM0 = TODAY0 + N;                  // R+N
+  const todayCols = Array.from({ length: N }, (_, k) => colLetter(TODAY0 + k));
+  const cumCols = Array.from({ length: N }, (_, k) => colLetter(CUM0 + k));
+  const HMAX = 'BA1', HMIN = 'BA2';
+  const MAXC = `$${HMAX}`, MINC = `$${HMIN}`;
+
+  const PD = `${PROD}!$D$2:$D$5000`, PAB = `${PROD}!$AB$2:$AB$5000`, PE = `${PROD}!$E$2:$E$5000`, PB = `${PROD}!$B$2:$B$5000`;
+  const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`, AB = `${ADS}!$B$2:$B$5000`;
+  const gamesArr = groups.map(g => `{${groupGames[g].map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`);
+  const groupsArr = `{${groups.map(g => `"${g}"`).join(',')}}`;
+
+  const dser = r => `(${MAXC}-INT((${r}-2)/${N}))`;          // this row's date serial
+  const invalid = r => `${dser(r)}<${MINC}`;
+  const dtxt = r => `TEXT(${dser(r)},"yyyy-MM-dd")`;
+  const rank = r => `(MOD(${r}-2,${N})+1)`;
+  const todayRange = r => `$${todayCols[0]}${r}:$${todayCols[N - 1]}${r}`;
+  const cumRange = r => `$${cumCols[0]}${r}:$${cumCols[N - 1]}${r}`;
+  const ifGrp = (r, body) => `=IF($${aCol}${r}="","",${body})`;  // guard on 项目组 resolved
+
+  const plan = {};
+  // helper: today spend per fixed group k
+  todayCols.forEach((col, k) => {
+    plan[col] = r => `=IF(${invalid(r)},"",SUM(SUMIFS(${AE},${AB},${gamesArr[k]},${AD},${dtxt(r)})))`;
+  });
+  // helper: cumulative spend per fixed group k (game∈group AND date<=)
+  cumCols.forEach((col, k) => {
+    plan[col] = r => `=IF(${invalid(r)},"",SUMPRODUCT(ISNUMBER(MATCH(${AB},${gamesArr[k]},0))*(DATEVALUE(${AD})<=${dser(r)})*${AE}))`;
+  });
+  // visible columns by header name
+  plan[bCol] = r => `=IF(${invalid(r)},"",${dser(r)})`;                                   // 统计周期
+  plan[cCol] = r => `=IF(${invalid(r)},"",LARGE(${todayRange(r)},${rank(r)}))`;           // 消耗 (rank-th highest)
+  plan[aCol] = r => `=IF(${invalid(r)},"",INDEX(${groupsArr},MATCH($${cCol}${r},${todayRange(r)},0)))`; // 项目组
+  plan[dCol] = r => ifGrp(r, `SUMIFS(${PAB},${PB},$${aCol}${r},${PD},${dtxt(r)})`);       // 广告总收入
+  plan[eCol] = r => ifGrp(r, `IFERROR($${dCol}${r}/$${cCol}${r},"")`);                    // 当日 ROAS
+  plan[fCol] = r => ifGrp(r, `INDEX(${cumRange(r)},MATCH($${aCol}${r},${groupsArr},0))`); // 累计消耗
+  plan[gCol] = r => ifGrp(r, `SUMPRODUCT((${PB}=$${aCol}${r})*(DATEVALUE(${PD})<=${dser(r)})*${PAB})`); // 累计收入
+  plan[hCol] = r => ifGrp(r, `IFERROR($${gCol}${r}/$${fCol}${r},"")`);                    // 累计 ROI
+  plan[iCol] = r => ifGrp(r, `SUMIFS(${PE},${PB},$${aCol}${r},${PD},${dtxt(r)})`);        // 新增用户
+
+  // write max/min serial helper values
+  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+    { valueRange: { range: `${PROJECT_SHEET_ID}!${HMAX}:${HMIN}`, values: [[maxSerial], [minSerial]] } });
+  await writeFormulas(token, PROJECT_SHEET_ID, targetRow, plan);
+  await applyFormats(token, PROJECT_SHEET_ID, targetRow, bCol, [eCol, hCol]);
+  // hide helper columns (today+cum) and the serial helper col BA(52)
+  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: CUM0 + N - 1 },
+      dimensionProperties: { visible: false } }).catch(() => {});
+  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 52, endIndex: 53 },
+      dimensionProperties: { visible: false } }).catch(() => {});
+  return targetRow;
+}
+
 async function main() {
   const token = await getFeishuToken();
-  console.log('Building 日经营数据汇总...');
-  const t = await ensureDailySummary(token);
-  console.log(`Done. Filled to row ${t}.`);
+  const which = process.env.ONLY || 'all';
+  if (which === 'all' || which === 'daily') {
+    console.log('Building 日经营数据汇总...');
+    const t = await ensureDailySummary(token);
+    console.log(`  done, row ${t}.`);
+  }
+  if (which === 'all' || which === 'project') {
+    console.log('Building 项目维度经营表...');
+    const t = await ensureProjectSummary(token);
+    console.log(`  done, row ${t}.`);
+  }
 }
 
 if (require.main === module) {
   main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });
 }
 
-module.exports = { ensureDailySummary, getFeishuToken };
+module.exports = { ensureDailySummary, ensureProjectSummary, getFeishuToken };
