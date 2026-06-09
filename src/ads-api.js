@@ -48,13 +48,40 @@ function tiktokGet(path, accessToken) {
     const req = https.request(
       { hostname: TIKTOK_HOST, path, method: 'GET',
         headers: { 'Access-Token': accessToken, 'Content-Type': 'application/json' } },
-      res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(JSON.parse(d))); }
+      res => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => {
+          try { resolve(JSON.parse(d)); }
+          catch (e) { reject(new Error(`TikTok API non-JSON (HTTP ${res.statusCode}): ${d.slice(0, 300)}`)); }
+        });
+      }
     );
     req.on('error', reject); req.end();
   });
 }
 
 async function getAdvertisers(bcId, accessToken) {
+  const explicitIds = (process.env.TIKTOK_ADVERTISER_IDS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  if (explicitIds.length > 0) {
+    console.log(`  Using explicit advertiser IDs (${explicitIds.length})`);
+    const qs = new URLSearchParams({
+      advertiser_ids: JSON.stringify(explicitIds),
+      fields: JSON.stringify(['advertiser_name']),
+    }).toString();
+    const r = await tiktokGet(`/open_api/v1.3/advertiser/info/?${qs}`, accessToken);
+    if (r.code !== 0) {
+      console.warn(`[warn] advertiser/info for names failed: ${r.message}. Using IDs as names.`);
+      return explicitIds.map(id => ({ id, name: id }));
+    }
+    const nameMap = {};
+    for (const adv of r.data?.list || []) nameMap[String(adv.advertiser_id)] = adv.advertiser_name;
+    return explicitIds.map(id => ({ id, name: nameMap[id] || id }));
+  }
+
+  // BC API fallback
   const list = [];
   let page = 1;
   while (true) {
