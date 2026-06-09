@@ -398,6 +398,90 @@ async function writeCols(token, sheetId, plan, targetRow) {
   process.stdout.write('\n');
 }
 
+// ─── 投放日表-素材维度 (TOBfe9) ─────────────────────────────────────────────
+// One row per (day × 创意素材), deduped from ad-level 投放数据原表 and sorted by
+// DATEVALUE(date)*1e7 + material-day 消耗 descending. 消耗=0 excluded. 项目组 is
+// derived material→game (the ad row's 游戏名称) → group (product + extra map).
+
+const AD_MATERIAL_SHEET_ID = 'TOBfe9';
+
+async function getAdMaterialInfo(token) {
+  const spend = {};
+  let rowCount = 0, startRow = 2;
+  while (true) {
+    const r = await feishuReq('GET',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/uqJEhq!D${startRow}:M${startRow + 499}`, token);
+    const rows = r.data?.valueRange?.values || [];
+    if (!rows.length) break;
+    let has = false;
+    for (const row of rows) {
+      const d = row[0], e = parseFloat(row[1]) || 0, mat = row[9]; // D=0 E=1 ... M=9
+      if (mat && d) { has = true; rowCount++; const k = `${d}|${mat}`; spend[k] = (spend[k] || 0) + e; }
+    }
+    if (!has || rows.length < 500) break;
+    startRow += 500;
+  }
+  return { adRowCount: rowCount, posCount: Object.values(spend).filter(v => v > 0).length };
+}
+
+async function ensureAdMaterialSummary(token) {
+  const header = await readHeader(token, AD_MATERIAL_SHEET_ID);
+  const L = {};
+  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
+  const need = (...names) => { for (const n of names) if (L[n]) return L[n]; throw new Error(`投放日表-素材维度缺少表头: ${names.join('/')}`); };
+  const seqCol = need('序号'), dateCol = need('按天'), grpCol = need('项目组'), matCol = need('创意素材名称'),
+        spendCol = need('消耗'), roasCol = need('广告收入 ROAS (TikTok)'), acostCol = need('活跃度平均成本'),
+        impCol = need('展示量'), ctrCol = need('点击率（目标页面）'), cpmCol = need('千次展示成本 (CPM)'),
+        apcCol = need('人均广告次数');
+
+  const { adRowCount, posCount } = await getAdMaterialInfo(token);
+  const { gameToGroup } = await getGroupMapping(token);
+  const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
+  const mapGames = Object.keys(fullMap);
+  const gamesArr = `{${mapGames.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
+  const groupsArr = `{${mapGames.map(x => `"${fullMap[x]}"`).join(',')}}`;
+  const helperRows = adRowCount + 1 + 500;
+  const mainRows = posCount + 1 + 300;
+  console.log(`  投放日表-素材维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
+
+  const AM = `${ADS}!$M$2:$M$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
+        AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AB = `${ADS}!$B$2:$B$5000`,
+        AX = `${ADS}!$X$2:$X$5000`, AY = `${ADS}!$Y$2:$Y$5000`, AAD = `${ADS}!$AD$2:$AD$5000`;
+  const T = 'T', U = 'U', V = 'V', W = 'W';
+  const helperPlan = {
+    [T]: i => `=IF(${ADS}!$M${i}="","",IF(COUNTIFS(${ADS}!$M$2:$M${i},${ADS}!$M${i},${ADS}!$D$2:$D${i},${ADS}!$D${i})=1,1,0))`,
+    [U]: i => `=IF(${ADS}!$M${i}="","",SUMIFS(${AE},${AM},${ADS}!$M${i},${AD},${ADS}!$D${i}))`,
+    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*10000000+$${U}${i},"")`,
+  };
+  const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
+  const m = r => `$${matCol}${r}`, dt = r => `$${dateCol}${r}`;
+  const ifm = (r, body) => `=IF(${m(r)}="","",${body})`;
+  const sif = (range, r) => `SUMIFS(${range},${AM},${m(r)},${AD},${dt(r)})`;
+  const mainPlan = {
+    [W]: r => `=IFERROR(MATCH(LARGE(${VR},ROW()-1),${VR},0),"")`,
+    [matCol]: r => `=IF($${W}${r}="","",INDEX(${AM},$${W}${r}))`,
+    [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
+    [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
+    [seqCol]: r => `=IF(${m(r)}="","",ROW()-1)`,
+    // material → game (the matched ad row's 游戏) → group
+    [grpCol]: r => `=IF($${W}${r}="","",IFERROR(INDEX(${groupsArr},MATCH(INDEX(${AB},$${W}${r}),${gamesArr},0)),""))`,
+    [impCol]: r => ifm(r, sif(AY, r)),
+    [acostCol]: r => ifm(r, `IFERROR($${spendCol}${r}/${sif(AG, r)},"")`),
+    [roasCol]: r => ifm(r, `IFERROR(SUMPRODUCT((${AM}=${m(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
+    [ctrCol]: r => ifm(r, `IFERROR(${sif(AX, r)}/$${impCol}${r},"")`),
+    [cpmCol]: r => ifm(r, `IFERROR($${spendCol}${r}/$${impCol}${r}*1000,"")`),
+    [apcCol]: r => ifm(r, `IFERROR(${sif(AAD, r)}/${sif(AG, r)},"")`),
+  };
+
+  await writeCols(token, AD_MATERIAL_SHEET_ID, helperPlan, helperRows);
+  await writeCols(token, AD_MATERIAL_SHEET_ID, mainPlan, mainRows);
+  await applyFormats(token, AD_MATERIAL_SHEET_ID, mainRows, dateCol, [roasCol, ctrCol]);
+  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+    { dimension: { sheetId: AD_MATERIAL_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
+      dimensionProperties: { visible: false } }).catch(() => {});
+  return mainRows;
+}
+
 async function main() {
   const token = await getFeishuToken();
   const which = process.env.ONLY || 'all';
@@ -414,6 +498,11 @@ async function main() {
   if (which === 'all' || which === 'adproduct') {
     console.log('Building 投放日表-产品维度...');
     const t = await ensureAdProductSummary(token);
+    console.log(`  done, row ${t}.`);
+  }
+  if (which === 'all' || which === 'admaterial') {
+    console.log('Building 投放日表-素材维度...');
+    const t = await ensureAdMaterialSummary(token);
     console.log(`  done, row ${t}.`);
   }
 }
