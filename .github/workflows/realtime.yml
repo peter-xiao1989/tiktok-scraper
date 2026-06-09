@@ -64,3 +64,16 @@ jobs:
         env:
           LARK_AS_BOT: "1"
         run: python3 rebuild_sucai_effect.py
+
+      - name: Sync 分时表到多维表
+        env:
+          LARK_AS_BOT: "1"
+        run: python3 sheets_to_base.py fenshi
+
+      - name: Render & send 分时报告到选品群
+        env:
+          LARK_AS_BOT: "1"
+        run: |
+          sudo apt-get install -y -qq fonts-noto-cjk > /dev/null
+          pip install -q matplotlib
+          python3 render_report.py fenshi
