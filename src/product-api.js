@@ -15,6 +15,7 @@ const { ensureLoggedIn, getCookieHeader } = require('./auth');
 const { scrapeAll } = require('./scraper');
 const { loadGames } = require('./games-loader');
 const { ensureReportFormulas } = require('./build-report');
+const { ensureDailySummary } = require('./build-summaries');
 
 const SPREADSHEET_TOKEN = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const PRODUCT_SHEET_ID  = 'c50205';
@@ -295,6 +296,12 @@ async function main() {
     await ensureReportFormulas(feishuToken);
   } catch (e) {
     console.warn(`[warn] report maintenance: ${e.message}`);
+  }
+  try {
+    console.log('Maintaining 日经营数据汇总...');
+    await ensureDailySummary(feishuToken);
+  } catch (e) {
+    console.warn(`[warn] daily summary maintenance: ${e.message}`);
   }
   console.log('Done.');
 }
