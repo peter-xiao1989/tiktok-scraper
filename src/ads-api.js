@@ -13,7 +13,7 @@
 const https = require('https');
 
 const BITABLE_APP   = 'HCXKb9qoDaiEmqsl4cocOnNPnpb';
-const TABLE_ID      = 'tblBswHs4fJ1s0ID'; // TT广告下载原表
+const TABLE_ID      = 'tblSw7adf1bpwEVH'; // TT投放数据原表
 const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
 const TIKTOK_HOST       = 'business-api.tiktok.com';
@@ -133,10 +133,19 @@ async function getAdvertiserTimezones(advertisers) {
 const DIMENSIONS = ['ad_id', 'stat_time_day'];
 const METRICS = [
   'spend', 'cpm', 'ctr', 'cpc', 'impressions', 'clicks',
-  'result', 'cost_per_conversion',
+  'conversion', 'cost_per_conversion',
   'app_install', 'cost_per_app_install', 'cost_per_1000_reached',
   'gross_impressions', 'engaged_view',
-  'total_purchase_value',
+  'onsite_ad_impression_ad_revenue_roas',
+  'onsite_unique_first_launch', 'onsite_cost_per_unique_first_launch',
+  'onsite_unique_non_first_launch', 'onsite_cost_per_unique_non_first_launch',
+  'onsite_launch_app_per_click', 'onsite_total_non_first_launch', 'onsite_cost_per_non_first_launch',
+  'onsite_ad_impression_ad_revenue_calendar_day0',
+  'onsite_ad_impression_ad_revenue_calendar_day6',
+  'onsite_ad_impression_ad_revenue_calendar_day13',
+  'onsite_ad_impression_ad_revenue_roas_calendar_day0',
+  'onsite_ad_impression_ad_revenue_roas_calendar_day6',
+  'onsite_ad_impression_ad_revenue_roas_calendar_day13',
 ];
 
 async function fetchReport(advertiserId, date, accessToken) {
@@ -164,57 +173,120 @@ async function fetchReport(advertiserId, date, accessToken) {
   return all;
 }
 
-// ─── Row mapping (32 fields = 31 data cols + 时区) ───────────────────────────
+// ─── Name enrichment ─────────────────────────────────────────────────────────
+
+async function enrichNames(advertiserId, adIds, accessToken) {
+  if (adIds.length === 0) return { adMap: {}, campMap: {}, agMap: {} };
+
+  const adMap = {};
+  for (let i = 0; i < adIds.length; i += 100) {
+    const batch = adIds.slice(i, i + 100);
+    const qs = new URLSearchParams({
+      advertiser_id: advertiserId,
+      filtering: JSON.stringify({ ad_ids: batch }),
+      fields: JSON.stringify(['ad_id','ad_name','ad_text','adgroup_id','adgroup_name','campaign_id','campaign_name']),
+      page_size: 100,
+    }).toString();
+    const r = await tiktokGet(`/open_api/v1.3/ad/get/?${qs}`, accessToken);
+    if (r.code !== 0) { console.warn(`  [warn] ad/get: ${r.message}`); continue; }
+    for (const ad of r.data?.list || []) adMap[ad.ad_id] = ad;
+  }
+
+  const campIds = [...new Set(Object.values(adMap).map(a => a.campaign_id).filter(Boolean))];
+  const agIds   = [...new Set(Object.values(adMap).map(a => a.adgroup_id).filter(Boolean))];
+
+  const campMap = {};
+  for (let i = 0; i < campIds.length; i += 100) {
+    const qs = new URLSearchParams({
+      advertiser_id: advertiserId,
+      filtering: JSON.stringify({ campaign_ids: campIds.slice(i, i + 100) }),
+      fields: JSON.stringify(['campaign_id','objective_type','budget_mode','budget']),
+      page_size: 100,
+    }).toString();
+    const r = await tiktokGet(`/open_api/v1.3/campaign/get/?${qs}`, accessToken);
+    if (r.code === 0) for (const c of r.data?.list || []) campMap[c.campaign_id] = c;
+  }
+
+  const agMap = {};
+  for (let i = 0; i < agIds.length; i += 100) {
+    const qs = new URLSearchParams({
+      advertiser_id: advertiserId,
+      filtering: JSON.stringify({ adgroup_ids: agIds.slice(i, i + 100) }),
+      fields: JSON.stringify(['adgroup_id','placement_type']),
+      page_size: 100,
+    }).toString();
+    const r = await tiktokGet(`/open_api/v1.3/adgroup/get/?${qs}`, accessToken);
+    if (r.code === 0) for (const ag of r.data?.list || []) agMap[ag.adgroup_id] = ag;
+  }
+
+  return { adMap, campMap, agMap };
+}
+
+// ─── Row mapping ──────────────────────────────────────────────────────────────
 
 function num(v)  { const n = parseFloat(v); return isNaN(n) ? null : n; }
 function str(v)  { return (v == null || v === '-') ? '' : String(v); }
-function pct(v)  { const n = parseFloat(v); return isNaN(n) ? '' : (n * 100).toFixed(2) + '%'; }
+function pct(v)  { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2) + '%'; }
 function div(a, b) {
   const na = parseFloat(a), nb = parseFloat(b);
   return (!isNaN(na) && !isNaN(nb) && nb !== 0) ? parseFloat((na / nb).toFixed(4)) : null;
 }
 
-function mapRecord(row, advertiserName, tz) {
+function mapRecord(row, adInfo, campInfo, agInfo, advertiserName, tz) {
   const d = row.dimensions || {};
   const m = row.metrics    || {};
   const gi  = parseFloat(m.gross_impressions);
   const ev  = parseFloat(m.engaged_view);
-  const sp  = parseFloat(m.spend);
   const imp = parseFloat(m.impressions);
+  const date = str(d.stat_time_day).slice(0, 10);
+  const adId = str(d.ad_id);
 
   return {
-    '系列名称':               str(d.campaign_name),
-    '按天':                   str(d.stat_time_day),
-    '消耗':                   num(m.spend),
-    '广告收入 ROAS (TikTok)': div(m.total_purchase_value, m.spend),  // calculated
-    '活跃度':                 num(m.engaged_view),
-    '活跃度平均成本':          div(m.spend, m.engaged_view),          // calculated
-    '人均广告次数':            div(gi, ev),                           // calculated
-    '点击率（目标页面）':      pct(m.ctr),
-    '千次展示成本 (CPM)':     num(m.cpm),
-    '平均点击成本（目标页面）': num(m.cpc),
-    '创意素材名称':            str(d.ad_name),
-    '账户名称':               advertiserName,
-    '推广系列预算':            str(d.campaign_budget),
-    '推广系列类型':            str(d.objective_type),
-    '广告组名称':              str(d.adgroup_name),
-    '广告位类型':              str(d.placement_type),
-    '广告名称':               str(d.ad_name),
-    '广告文案':               str(d.ad_text),
-    '推广系列预算类型':        str(d.budget_mode || d.campaign_budget_mode),
-    '应用安装数':              num(m.app_install),
-    '应用安装平均成本':        num(m.cost_per_app_install),           // fixed field name
-    '点击量（目标页面）':      num(m.clicks),
-    '展示量':                 num(m.impressions),
-    '覆盖千人成本':            num(m.cost_per_1000_reached),          // fixed field name
-    '转化量':                 num(m.result),                         // fixed field name
-    '平均转化成本':            num(m.cost_per_conversion),
-    '广告曝光事件率':          div(ev, imp) !== null ? parseFloat((ev / imp * 100).toFixed(4)) + '%' : '', // calculated
-    '广告曝光事件总数':        num(m.gross_impressions),
-    '广告曝光事件平均成本':    div(m.spend, m.gross_impressions),     // calculated
-    '广告曝光总价值':          null,
-    '广告曝光事件平均价值':    null,
-    '时区':                   tz,
+    '记录标识':                 `${advertiserName}|${date}|${adId}`,
+    '系列名称':                 str(adInfo?.campaign_name),
+    '按天':                     date,
+    '消耗':                     num(m.spend),
+    '广告收入 ROAS (TikTok)':   num(m.onsite_ad_impression_ad_revenue_roas),
+    '活跃度':                   num(m.onsite_unique_first_launch),
+    '活跃度平均成本':            num(m.onsite_cost_per_unique_first_launch),
+    '去重打开次数':              num(m.onsite_unique_non_first_launch),
+    '去重打开平均成本':          num(m.onsite_cost_per_unique_non_first_launch),
+    '打开率(%)':                pct(m.onsite_launch_app_per_click),
+    '总打开次数':                num(m.onsite_total_non_first_launch),
+    '打开平均成本':              num(m.onsite_cost_per_non_first_launch),
+    '人均广告次数':              div(gi, ev),
+    '点击率（目标页面）':        pct(m.ctr),
+    '千次展示成本 (CPM)':       num(m.cpm),
+    '平均点击成本（目标页面）':  num(m.cpc),
+    '创意素材名称':              str(adInfo?.ad_name),
+    '账户名称':                  advertiserName,
+    '推广系列预算':              campInfo?.budget != null ? String(campInfo.budget) : '',
+    '推广系列类型':              str(campInfo?.objective_type),
+    '广告组名称':                str(adInfo?.adgroup_name),
+    '广告位类型':                str(agInfo?.placement_type),
+    '广告名称':                  str(adInfo?.ad_name),
+    '广告文案':                  str(adInfo?.ad_text),
+    '推广系列预算类型':          str(campInfo?.budget_mode),
+    '应用安装数':                num(m.app_install),
+    '应用安装平均成本':          num(m.cost_per_app_install),
+    '点击量（目标页面）':        num(m.clicks),
+    '展示量':                   num(m.impressions),
+    '覆盖千人成本':              num(m.cost_per_1000_reached),
+    '转化量':                   num(m.conversion),
+    '平均转化成本':              num(m.cost_per_conversion),
+    '广告曝光事件率':            !isNaN(ev) && !isNaN(imp) && imp > 0
+                                   ? parseFloat((ev / imp * 100).toFixed(4)) + '%' : '',
+    '广告曝光事件总数':          num(m.gross_impressions),
+    '广告曝光事件平均成本':      div(m.spend, m.gross_impressions),
+    '广告曝光总价值':            null,
+    '广告曝光事件平均价值':      null,
+    '第0日历日广告收入':         num(m.onsite_ad_impression_ad_revenue_calendar_day0),
+    '第6日历日广告收入':         num(m.onsite_ad_impression_ad_revenue_calendar_day6),
+    '第13日历日广告收入':        num(m.onsite_ad_impression_ad_revenue_calendar_day13),
+    '第0日历日广告收入ROAS':     num(m.onsite_ad_impression_ad_revenue_roas_calendar_day0),
+    '第6日历日广告收入ROAS':     num(m.onsite_ad_impression_ad_revenue_roas_calendar_day6),
+    '第13日历日广告收入ROAS':    num(m.onsite_ad_impression_ad_revenue_roas_calendar_day13),
+    '时区':                     tz,
   };
 }
 
@@ -307,7 +379,17 @@ async function main() {
 
     const rows = await fetchReport(adv.id, date, accessToken);
     process.stdout.write(`${rows.length} rows\n`);
-    allRecords.push(...rows.map(row => mapRecord(row, adv.name, tz)));
+    if (rows.length === 0) continue;
+
+    const adIds = [...new Set(rows.map(r => r.dimensions.ad_id))];
+    const { adMap, campMap, agMap } = await enrichNames(adv.id, adIds, accessToken);
+
+    allRecords.push(...rows.map(row => {
+      const adInfo   = adMap[row.dimensions.ad_id] || {};
+      const campInfo = campMap[adInfo.campaign_id]  || {};
+      const agInfo   = agMap[adInfo.adgroup_id]     || {};
+      return mapRecord(row, adInfo, campInfo, agInfo, adv.name, tz);
+    }));
   }
 
   if (!allRecords.length) { console.log('Nothing to write.'); return; }
