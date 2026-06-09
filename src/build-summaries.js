@@ -511,4 +511,7 @@ if (require.main === module) {
   main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });
 }
 
-module.exports = { ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, getFeishuToken };
+module.exports = {
+  ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary,
+  getFeishuToken, getGroupMapping, EXTRA_GROUP_MAP,
+};
