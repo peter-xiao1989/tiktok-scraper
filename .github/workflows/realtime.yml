@@ -49,3 +49,8 @@ jobs:
         env:
           LARK_AS_BOT: "1"
         run: python3 rebuild_fenshi_summary.py
+
+      - name: Rebuild 分时素材效果表
+        env:
+          LARK_AS_BOT: "1"
+        run: python3 rebuild_sucai_effect.py
