@@ -1,20 +1,38 @@
 /**
- * TikTok Marketing API v1.3 — realtime today's data → Bitable 每日实时投放数据
+ * TikTok Marketing API v1.3 — realtime today's data → Feishu Spreadsheet (TT每日分时投放数据原表)
  *
- * Runs every 2 hours. Clears the table, then writes fresh today's data.
+ * Runs every 2 hours. Clears the sheet from row 2, then writes fresh today's data.
  *
  * Required env vars:
  *   TIKTOK_ACCESS_TOKEN
- *   TIKTOK_BC_ID  (default: 7623379731659948049)
+ * Optional:
+ *   TARGET_DATE          YYYY-MM-DD override
+ *   FEISHU_APP_ID / FEISHU_APP_SECRET
+ *   TIKTOK_APP_ID / TIKTOK_APP_SECRET
+ *   TIKTOK_BC_ID
  */
 
 const https = require('https');
 
-const BITABLE_APP   = 'HCXKb9qoDaiEmqsl4cocOnNPnpb';
-const TABLE_ID      = 'tbl0iG0tQgVeC1dA'; // 每日实时投放数据
-const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
-const TIKTOK_HOST       = 'business-api.tiktok.com';
+const SPREADSHEET_TOKEN  = 'J8mswO2vziyIAAkdt4rcVeaDnog';
+const REALTIME_SHEET_ID  = 'jArZTX'; // TT每日分时投放数据原表
+const FEISHU_APP_ID      = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
+const FEISHU_APP_SECRET  = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+const TIKTOK_HOST        = 'business-api.tiktok.com';
+
+// Column headers (row 1). Matches TT投放数据原表 A-AT + 更新时间 at end.
+const HEADERS = [
+  '序号','游戏名称','系列名称','更新时间','消耗','广告收入 ROAS (TikTok)','活跃度','活跃度平均成本',
+  '人均广告次数','点击率（目标页面）','千次展示成本 (CPM)','平均点击成本（目标页面）',
+  '创意素材名称','账户名称','推广系列预算','推广系列类型','广告组名称','广告位类型',
+  '广告名称','广告文案','推广系列预算类型','应用安装数','应用安装平均成本',
+  '点击量（目标页面）','展示量','覆盖千人成本','转化量','平均转化成本',
+  '广告曝光事件率','广告曝光事件总数','广告曝光事件平均成本','广告曝光总价值','广告曝光事件平均价值',
+  '时区','去重打开次数','去重打开平均成本','打开率(%)','总打开次数','打开平均成本',
+  '第0日历日广告收入','第6日历日广告收入','第13日历日广告收入',
+  '第0日历日广告收入ROAS','第6日历日广告收入ROAS','第13日历日广告收入ROAS',
+  '出价方式',
+];
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -53,7 +71,7 @@ function tiktokGet(path, token) {
         res.on('data', c => d += c);
         res.on('end', () => {
           try { resolve(JSON.parse(d)); }
-          catch (e) { reject(new Error(`TikTok API non-JSON (HTTP ${res.statusCode}): ${d.slice(0, 300)}`)); }
+          catch (e) { reject(new Error(`TikTok non-JSON (HTTP ${res.statusCode}): ${d.slice(0, 200)}`)); }
         });
       }
     );
@@ -75,58 +93,38 @@ async function resolveAdvertiserInfo(ids, accessToken) {
   return ids.map(id => ({ id, name: infoMap[id]?.name || id, offsetHours: infoMap[id]?.offsetHours ?? 8 }));
 }
 
-async function getAdvertisers(bcId, accessToken) {
-  const appId     = process.env.TIKTOK_APP_ID;
+async function getAdvertisers(accessToken) {
+  const appId = process.env.TIKTOK_APP_ID;
   const appSecret = process.env.TIKTOK_APP_SECRET;
-
-  // 1. oauth2/advertiser/get — returns all advertisers that authorized this app
   if (appId && appSecret) {
     const qs = new URLSearchParams({ app_id: appId, secret: appSecret, access_token: accessToken }).toString();
     const r = await tiktokGet(`/open_api/v1.3/oauth2/advertiser/get/?${qs}`, accessToken);
     if (r.code === 0) {
-      const list = r.data?.list || [];
-      console.log(`  oauth2/advertiser/get → ${list.length} advertisers`);
-      const ids = list.map(a => String(a.advertiser_id));
+      const ids = (r.data?.list || []).map(a => String(a.advertiser_id));
+      console.log(`  oauth2/advertiser/get → ${ids.length} advertisers`);
       return resolveAdvertiserInfo(ids, accessToken);
     }
-    console.warn(`[warn] oauth2/advertiser/get: code=${r.code} ${r.message}`);
+    console.warn(`[warn] oauth2/advertiser/get: ${r.message}`);
   }
-
-  // 2. BC advertiser list
-  if (bcId) {
-    try {
-      const ids = [];
-      let page = 1;
-      while (true) {
-        const qs = new URLSearchParams({ bc_id: bcId, page, page_size: 100 }).toString();
-        const r = await tiktokGet(`/open_api/v1.3/bc/advertiser/list/?${qs}`, accessToken);
-        if (r.code !== 0) throw new Error(`code=${r.code} ${r.message}`);
-        ids.push(...(r.data?.list || []).map(a => String(a.advertiser_id)));
-        if (!r.data?.page_info?.has_more) break;
-        page++;
-      }
-      if (ids.length > 0) return resolveAdvertiserInfo(ids, accessToken);
-    } catch (e) {
-      console.warn(`[warn] bc/advertiser/list failed: ${e.message}`);
+  const bcId = process.env.TIKTOK_BC_ID || '7623379731659948049';
+  try {
+    const ids = [];
+    let page = 1;
+    while (true) {
+      const qs = new URLSearchParams({ bc_id: bcId, page, page_size: 100 }).toString();
+      const r = await tiktokGet(`/open_api/v1.3/bc/advertiser/list/?${qs}`, accessToken);
+      if (r.code !== 0) throw new Error(`${r.code} ${r.message}`);
+      ids.push(...(r.data?.list || []).map(a => String(a.advertiser_id)));
+      if (!r.data?.page_info?.has_more) break;
+      page++;
     }
+    if (ids.length > 0) return resolveAdvertiserInfo(ids, accessToken);
+  } catch (e) {
+    console.warn(`[warn] bc/advertiser/list: ${e.message}`);
   }
-
-  // 3. Explicit IDs fallback
-  const explicitIds = (process.env.TIKTOK_ADVERTISER_IDS || '')
-    .split(',').map(s => s.trim()).filter(Boolean);
-  if (explicitIds.length > 0) {
-    console.log(`  Using explicit TIKTOK_ADVERTISER_IDS (${explicitIds.length})`);
-    return resolveAdvertiserInfo(explicitIds, accessToken);
-  }
-
-  throw new Error('Cannot get advertiser list. Set TIKTOK_APP_ID+TIKTOK_APP_SECRET, or TIKTOK_ADVERTISER_IDS.');
-}
-
-async function getAdvertiserTimezones(advertisers) {
-  // timezone already resolved in getAdvertisers via resolveAdvertiserInfo
-  const map = {};
-  for (const adv of advertisers) map[adv.id] = adv.offsetHours ?? 8;
-  return map;
+  const explicit = (process.env.TIKTOK_ADVERTISER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (explicit.length > 0) return resolveAdvertiserInfo(explicit, accessToken);
+  throw new Error('Cannot get advertisers.');
 }
 
 const DIMENSIONS = ['ad_id', 'stat_time_day'];
@@ -153,14 +151,11 @@ async function fetchTodayReport(advertiserId, date, accessToken) {
   while (true) {
     const qs = new URLSearchParams({
       advertiser_id: advertiserId,
-      report_type: 'BASIC',
-      data_level: 'AUCTION_AD',
+      report_type: 'BASIC', data_level: 'AUCTION_AD',
       dimensions: JSON.stringify(DIMENSIONS),
       metrics: JSON.stringify(METRICS),
-      start_date: date,
-      end_date: date,
-      page_size: 1000,
-      page,
+      start_date: date, end_date: date,
+      page_size: 1000, page,
       multi_adv_report_in_utc_time: false,
     }).toString();
     const r = await tiktokGet(`/open_api/v1.3/report/integrated/get/?${qs}`, accessToken);
@@ -176,7 +171,6 @@ async function fetchTodayReport(advertiserId, date, accessToken) {
 
 async function enrichNames(advertiserId, adIds, accessToken) {
   if (adIds.length === 0) return { adMap: {}, campMap: {}, agMap: {} };
-
   const adMap = {};
   for (let i = 0; i < adIds.length; i += 100) {
     const qs = new URLSearchParams({
@@ -189,10 +183,8 @@ async function enrichNames(advertiserId, adIds, accessToken) {
     if (r.code !== 0) { console.warn(`  [warn] ad/get: ${r.message}`); continue; }
     for (const ad of r.data?.list || []) adMap[ad.ad_id] = ad;
   }
-
   const campIds = [...new Set(Object.values(adMap).map(a => a.campaign_id).filter(Boolean))];
   const agIds   = [...new Set(Object.values(adMap).map(a => a.adgroup_id).filter(Boolean))];
-
   const campMap = {};
   for (let i = 0; i < campIds.length; i += 100) {
     const qs = new URLSearchParams({
@@ -204,7 +196,6 @@ async function enrichNames(advertiserId, adIds, accessToken) {
     const r = await tiktokGet(`/open_api/v1.3/campaign/get/?${qs}`, accessToken);
     if (r.code === 0) for (const c of r.data?.list || []) campMap[c.campaign_id] = c;
   }
-
   const agMap = {};
   for (let i = 0; i < agIds.length; i += 100) {
     const qs = new URLSearchParams({
@@ -216,86 +207,101 @@ async function enrichNames(advertiserId, adIds, accessToken) {
     const r = await tiktokGet(`/open_api/v1.3/adgroup/get/?${qs}`, accessToken);
     if (r.code === 0) for (const ag of r.data?.list || []) agMap[ag.adgroup_id] = ag;
   }
-
   return { adMap, campMap, agMap };
 }
 
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
-function num(v)  { const n = parseFloat(v); return isNaN(n) ? null : n; }
+function num(v)  { const n = parseFloat(v); return isNaN(n) ? '' : n; }
 function str(v)  { return (v == null || v === '-') ? '' : String(v); }
 function pct(v)  { const n = parseFloat(v); return isNaN(n) ? '' : n.toFixed(2) + '%'; }
 function div(a, b) {
   const na = parseFloat(a), nb = parseFloat(b);
-  return (!isNaN(na) && !isNaN(nb) && nb !== 0) ? parseFloat((na / nb).toFixed(4)) : null;
+  return (!isNaN(na) && !isNaN(nb) && nb !== 0) ? parseFloat((na / nb).toFixed(4)) : '';
 }
 
-function mapRecord(row, adInfo, campInfo, agInfo, advertiserName, tz, updateTime) {
+function gameName(series) {
+  if (!series) return '';
+  return series.replace(/[^A-Za-z\s].*/s, '').trim();
+}
+
+function bidType(series) {
+  return (series || '').includes('自动出价') ? '自动出价' : '手动出价';
+}
+
+// Returns array matching HEADERS order (A through AU)
+function recordToRow(row, adInfo, campInfo, agInfo, advertiserName, tz, updateTime, seq) {
   const d = row.dimensions || {};
   const m = row.metrics    || {};
   const gi  = parseFloat(m.gross_impressions);
   const ev  = parseFloat(m.engaged_view);
   const imp = parseFloat(m.impressions);
-  const date = str(d.stat_time_day).slice(0, 10);
+  const series = str(adInfo?.campaign_name);
+  const date   = str(d.stat_time_day).slice(0, 10);
 
-  return {
-    '系列名称':                 str(adInfo?.campaign_name),
-    '按天':                     date,
-    '更新时间':                 updateTime,
-    '消耗':                     num(m.spend),
-    '广告收入 ROAS (TikTok)':   num(m.onsite_ad_impression_ad_revenue_roas),
-    '活跃度':                   num(m.onsite_unique_first_launch),
-    '活跃度平均成本':            num(m.onsite_cost_per_unique_first_launch),
-    '去重打开次数':              num(m.onsite_unique_non_first_launch),
-    '去重打开平均成本':          num(m.onsite_cost_per_unique_non_first_launch),
-    '打开率(%)':                pct(m.onsite_launch_app_per_click),
-    '总打开次数':                num(m.onsite_total_non_first_launch),
-    '打开平均成本':              num(m.onsite_cost_per_non_first_launch),
-    '人均广告次数':              div(gi, ev),
-    '点击率（目标页面）':        pct(m.ctr),
-    '千次展示成本 (CPM)':       num(m.cpm),
-    '平均点击成本（目标页面）':  num(m.cpc),
-    '创意素材名称':              str(adInfo?.ad_name),
-    '账户名称':                  advertiserName,
-    '推广系列预算':              campInfo?.budget != null ? String(campInfo.budget) : '',
-    '推广系列类型':              str(campInfo?.objective_type),
-    '广告组名称':                str(adInfo?.adgroup_name),
-    '广告位类型':                str(agInfo?.placement_type),
-    '广告名称':                  str(adInfo?.ad_name),
-    '广告文案':                  str(adInfo?.ad_text),
-    '推广系列预算类型':          str(campInfo?.budget_mode),
-    '应用安装数':                num(m.app_install),
-    '应用安装平均成本':          num(m.cost_per_app_install),
-    '点击量（目标页面）':        num(m.clicks),
-    '展示量':                   num(m.impressions),
-    '覆盖千人成本':              num(m.cost_per_1000_reached),
-    '转化量':                   num(m.conversion),
-    '平均转化成本':              num(m.cost_per_conversion),
-    '广告曝光事件率':            !isNaN(ev) && !isNaN(imp) && imp > 0
-                                   ? parseFloat((ev / imp * 100).toFixed(4)) + '%' : '',
-    '广告曝光事件总数':          num(m.gross_impressions),
-    '广告曝光事件平均成本':      div(m.spend, m.gross_impressions),
-    '广告曝光总价值':            null,
-    '广告曝光事件平均价值':      null,
-    '第0日历日广告收入':         num(m.onsite_ad_impression_ad_revenue_calendar_day0),
-    '第6日历日广告收入':         num(m.onsite_ad_impression_ad_revenue_calendar_day6),
-    '第13日历日广告收入':        num(m.onsite_ad_impression_ad_revenue_calendar_day13),
-    '第0日历日广告收入ROAS':     num(m.onsite_ad_impression_ad_revenue_roas_calendar_day0),
-    '第6日历日广告收入ROAS':     num(m.onsite_ad_impression_ad_revenue_roas_calendar_day6),
-    '第13日历日广告收入ROAS':    num(m.onsite_ad_impression_ad_revenue_roas_calendar_day13),
-    '时区':                     tz,
-  };
+  return [
+    seq,                                              // A 序号
+    gameName(series),                                 // B 游戏名称
+    series,                                           // C 系列名称
+    updateTime,                                       // D 更新时间
+    num(m.spend),                                     // E 消耗
+    num(m.onsite_ad_impression_ad_revenue_roas),       // F 广告收入 ROAS
+    num(m.onsite_unique_first_launch),                 // G 活跃度
+    num(m.onsite_cost_per_unique_first_launch),        // H 活跃度平均成本
+    div(gi, ev),                                      // I 人均广告次数
+    pct(m.ctr),                                       // J 点击率（目标页面）
+    num(m.cpm),                                       // K 千次展示成本 (CPM)
+    num(m.cpc),                                       // L 平均点击成本（目标页面）
+    str(adInfo?.ad_name),                             // M 创意素材名称
+    advertiserName,                                   // N 账户名称
+    campInfo?.budget != null ? String(campInfo.budget) : '', // O 推广系列预算
+    str(campInfo?.objective_type),                    // P 推广系列类型
+    str(adInfo?.adgroup_name),                        // Q 广告组名称
+    str(agInfo?.placement_type),                      // R 广告位类型
+    str(adInfo?.ad_name),                             // S 广告名称
+    str(adInfo?.ad_text),                             // T 广告文案
+    str(campInfo?.budget_mode),                       // U 推广系列预算类型
+    num(m.app_install),                               // V 应用安装数
+    num(m.cost_per_app_install),                      // W 应用安装平均成本
+    num(m.clicks),                                    // X 点击量（目标页面）
+    num(m.impressions),                               // Y 展示量
+    num(m.cost_per_1000_reached),                     // Z 覆盖千人成本
+    num(m.conversion),                                // AA 转化量
+    num(m.cost_per_conversion),                       // AB 平均转化成本
+    (!isNaN(ev) && !isNaN(imp) && imp > 0            // AC 广告曝光事件率
+      ? parseFloat((ev / imp * 100).toFixed(4)) + '%' : ''),
+    num(m.gross_impressions),                         // AD 广告曝光事件总数
+    div(m.spend, m.gross_impressions),                // AE 广告曝光事件平均成本
+    '',                                               // AF 广告曝光总价值
+    '',                                               // AG 广告曝光事件平均价值
+    tz,                                               // AH 时区
+    num(m.onsite_unique_non_first_launch),             // AI 去重打开次数
+    num(m.onsite_cost_per_unique_non_first_launch),    // AJ 去重打开平均成本
+    pct(m.onsite_launch_app_per_click),               // AK 打开率(%)
+    num(m.onsite_total_non_first_launch),              // AL 总打开次数
+    num(m.onsite_cost_per_non_first_launch),           // AM 打开平均成本
+    num(m.onsite_ad_impression_ad_revenue_calendar_day0),   // AN 第0日历日广告收入
+    num(m.onsite_ad_impression_ad_revenue_calendar_day6),   // AO 第6日历日广告收入
+    num(m.onsite_ad_impression_ad_revenue_calendar_day13),  // AP 第13日历日广告收入
+    num(m.onsite_ad_impression_ad_revenue_roas_calendar_day0),   // AQ 第0日历日广告收入ROAS
+    num(m.onsite_ad_impression_ad_revenue_roas_calendar_day6),   // AR 第6日历日广告收入ROAS
+    num(m.onsite_ad_impression_ad_revenue_roas_calendar_day13),  // AS 第13日历日广告收入ROAS
+    bidType(series),                                  // AT 出价方式
+  ];
 }
 
-// ─── Feishu Bitable ───────────────────────────────────────────────────────────
+// ─── Feishu Spreadsheet API ───────────────────────────────────────────────────
 
 function feishuReq(method, path, token, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
     if (data) headers['Content-Length'] = Buffer.byteLength(data);
-    const req = https.request({ hostname: 'open.feishu.cn', path, method, headers },
-      res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(JSON.parse(d))); });
+    const req = https.request({ hostname: 'open.feishu.cn', path, method, headers, timeout: 30000 },
+      res => { let d = ''; res.on('data', c => d += c); res.on('end', () => {
+        try { resolve(JSON.parse(d)); } catch(e) { reject(new Error(`non-JSON: ${d.slice(0,200)}`)); }
+      }); });
+    req.on('timeout', () => { req.destroy(); reject(new Error(`timeout: ${path}`)); });
     req.on('error', reject);
     if (data) req.write(data); req.end();
   });
@@ -304,105 +310,74 @@ function feishuReq(method, path, token, body) {
 async function getFeishuToken() {
   const r = await feishuReq('POST', '/open-apis/auth/v3/tenant_access_token/internal', '',
     { app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET });
+  if (!r.tenant_access_token) throw new Error('Feishu auth failed: ' + JSON.stringify(r));
   return r.tenant_access_token;
 }
 
-const FIELD_DEFS = [
-  { name: '系列名称',                 type: 1 },
-  { name: '按天',                     type: 1 },
-  { name: '更新时间',                 type: 1 },
-  { name: '消耗',                     type: 2 },
-  { name: '广告收入 ROAS (TikTok)',   type: 2 },
-  { name: '活跃度',                   type: 2 },
-  { name: '活跃度平均成本',           type: 2 },
-  { name: '去重打开次数',             type: 2 },
-  { name: '去重打开平均成本',         type: 2 },
-  { name: '打开率(%)',               type: 1 },
-  { name: '总打开次数',               type: 2 },
-  { name: '打开平均成本',             type: 2 },
-  { name: '人均广告次数',             type: 2 },
-  { name: '点击率（目标页面）',       type: 1 },
-  { name: '千次展示成本 (CPM)',       type: 2 },
-  { name: '平均点击成本（目标页面）', type: 2 },
-  { name: '创意素材名称',             type: 1 },
-  { name: '账户名称',                 type: 1 },
-  { name: '推广系列预算',             type: 1 },
-  { name: '推广系列类型',             type: 1 },
-  { name: '广告组名称',               type: 1 },
-  { name: '广告位类型',               type: 1 },
-  { name: '广告名称',                 type: 1 },
-  { name: '广告文案',                 type: 1 },
-  { name: '推广系列预算类型',         type: 1 },
-  { name: '应用安装数',               type: 2 },
-  { name: '应用安装平均成本',         type: 2 },
-  { name: '点击量（目标页面）',       type: 2 },
-  { name: '展示量',                   type: 2 },
-  { name: '覆盖千人成本',             type: 2 },
-  { name: '转化量',                   type: 2 },
-  { name: '平均转化成本',             type: 2 },
-  { name: '广告曝光事件率',           type: 1 },
-  { name: '广告曝光事件总数',         type: 2 },
-  { name: '广告曝光事件平均成本',     type: 2 },
-  { name: '广告曝光总价值',           type: 2 },
-  { name: '广告曝光事件平均价值',     type: 2 },
-  { name: '第0日历日广告收入',        type: 2 },
-  { name: '第6日历日广告收入',        type: 2 },
-  { name: '第13日历日广告收入',       type: 2 },
-  { name: '第0日历日广告收入ROAS',    type: 2 },
-  { name: '第6日历日广告收入ROAS',    type: 2 },
-  { name: '第13日历日广告收入ROAS',   type: 2 },
-  { name: '时区',                     type: 1 },
-];
-
-async function setupFields(token) {
+// Get current data row count
+async function getSheetRowCount(token) {
   const r = await feishuReq('GET',
-    `/open-apis/bitable/v1/apps/${BITABLE_APP}/tables/${TABLE_ID}/fields?page_size=100`, token);
-  const existing = r.data?.items || [];
-  const existingNames = new Set(existing.map(f => f.field_name));
-  for (const def of FIELD_DEFS) {
-    if (!existingNames.has(def.name)) {
-      await feishuReq('POST',
-        `/open-apis/bitable/v1/apps/${BITABLE_APP}/tables/${TABLE_ID}/fields`,
-        token, { field_name: def.name, type: def.type });
-    }
-  }
+    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/query`, token);
+  const sheet = (r.data?.sheets || []).find(s => s.sheet_id === REALTIME_SHEET_ID);
+  return sheet?.grid_properties?.row_count || 1;
 }
 
-async function clearTable(token) {
-  let deleted = 0;
-  while (true) {
-    const r = await feishuReq('GET',
-      `/open-apis/bitable/v1/apps/${BITABLE_APP}/tables/${TABLE_ID}/records?page_size=500`, token);
-    if (r.code !== 0) throw new Error(`list records: ${JSON.stringify(r)}`);
-    const ids = (r.data?.items || []).map(x => x.record_id);
-    if (!ids.length) break;
-    const dr = await feishuReq('POST',
-      `/open-apis/bitable/v1/apps/${BITABLE_APP}/tables/${TABLE_ID}/records/batch_delete`,
-      token, { records: ids });
-    if (dr.code !== 0) throw new Error(`batch_delete: ${JSON.stringify(dr)}`);
-    deleted += ids.length;
-    process.stdout.write(`\r  cleared ${deleted}...`);
-  }
-  if (deleted > 0) process.stdout.write('\n');
-  return deleted;
+// Write header row (always, to ensure correctness)
+async function ensureHeaders(token) {
+  const r = await feishuReq('PUT',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token, {
+      valueRange: {
+        range: `${REALTIME_SHEET_ID}!A1:AT1`,
+        values: [HEADERS],
+      },
+    });
+  if (r.code !== 0) throw new Error(`write headers: ${JSON.stringify(r)}`);
 }
 
-async function batchCreate(token, records) {
-  const BATCH = 500;
+// Overwrite data area with new rows (row 2 onwards), clear any extra rows
+async function writeDataRows(rows, currentRowCount, token) {
+  const endRow = Math.max(currentRowCount, rows.length + 1);
+  const lastCol = 'AT'; // 46 columns
+
+  // Write data rows (row 2 to row rows.length+1)
+  const BATCH = 100;
   let written = 0;
-  for (let i = 0; i < records.length; i += BATCH) {
-    const chunk = records.slice(i, i + BATCH);
-    const cleaned = chunk.map(fields => ({
-      fields: Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== null && v !== ''))
-    }));
-    const r = await feishuReq('POST',
-      `/open-apis/bitable/v1/apps/${BITABLE_APP}/tables/${TABLE_ID}/records/batch_create`,
-      token, { records: cleaned });
-    if (r.code !== 0) throw new Error(`batch_create: ${JSON.stringify(r)}`);
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH);
+    const startRow = i + 2;
+    const endDataRow = startRow + chunk.length - 1;
+    const r = await feishuReq('PUT',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token, {
+        valueRange: {
+          range: `${REALTIME_SHEET_ID}!A${startRow}:${lastCol}${endDataRow}`,
+          values: chunk,
+        },
+      });
+    if (r.code !== 0) throw new Error(`values PUT: ${JSON.stringify(r)}`);
     written += chunk.length;
-    process.stdout.write(`\r  written ${written}/${records.length}...`);
+    process.stdout.write(`\r  written ${written}/${rows.length}...`);
   }
   process.stdout.write('\n');
+
+  // Clear remaining rows from previous run (if any)
+  const lastNewRow = rows.length + 1;
+  if (currentRowCount > lastNewRow) {
+    const clearCount = currentRowCount - lastNewRow;
+    const emptyRows = Array.from({ length: clearCount }, () => Array(HEADERS.length).fill(''));
+    for (let i = 0; i < emptyRows.length; i += BATCH) {
+      const chunk = emptyRows.slice(i, i + BATCH);
+      const startRow = lastNewRow + 1 + i;
+      const endRow2  = startRow + chunk.length - 1;
+      await feishuReq('PUT',
+        `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token, {
+          valueRange: {
+            range: `${REALTIME_SHEET_ID}!A${startRow}:${lastCol}${endRow2}`,
+            values: chunk,
+          },
+        });
+    }
+    console.log(`  Cleared ${clearCount} extra rows.`);
+  }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -410,51 +385,51 @@ async function batchCreate(token, records) {
 async function main() {
   const accessToken = process.env.TIKTOK_ACCESS_TOKEN;
   if (!accessToken) { console.error('TIKTOK_ACCESS_TOKEN required'); process.exit(1); }
-  const bcId = process.env.TIKTOK_BC_ID || '7623379731659948049';
   const updateTime = nowBeijing();
   console.log(`[realtime] ${updateTime} (Beijing)`);
 
-  console.log('Getting Feishu token...');
   const feishuToken = await getFeishuToken();
 
-  await setupFields(feishuToken);
+  await ensureHeaders(feishuToken);
+  const currentRowCount = await getSheetRowCount(feishuToken);
+  console.log(`  Current sheet rows: ${currentRowCount}`);
 
-  console.log(`Fetching advertisers from BC ${bcId}...`);
-  const advertisers = await getAdvertisers(bcId, accessToken);
+  console.log('Fetching advertisers...');
+  const advertisers = await getAdvertisers(accessToken);
   console.log(`  ${advertisers.length} advertisers`);
-  const tzMap = await getAdvertiserTimezones(advertisers);
 
-  // Fetch today's data for all accounts
-  const allRecords = [];
+  const allRows = [];
+  let seq = 0;
   for (const adv of advertisers) {
-    const offsetHours = tzMap[adv.id] ?? 8;
-    const tz   = tzLabel(offsetHours);
-    const date = process.env.TARGET_DATE || todayInOffset(offsetHours);
+    const tz   = tzLabel(adv.offsetHours);
+    const date = process.env.TARGET_DATE || todayInOffset(adv.offsetHours);
     process.stdout.write(`  [${adv.name}] ${tz} ${date} — `);
-    const rows = await fetchTodayReport(adv.id, date, accessToken);
+
+    let rows;
+    try {
+      rows = await fetchTodayReport(adv.id, date, accessToken);
+    } catch (e) {
+      console.warn(`\n  [warn] ${e.message}`);
+      continue;
+    }
     process.stdout.write(`${rows.length} rows\n`);
     if (rows.length === 0) continue;
 
     const adIds = [...new Set(rows.map(r => r.dimensions.ad_id))];
     const { adMap, campMap, agMap } = await enrichNames(adv.id, adIds, accessToken);
 
-    allRecords.push(...rows.map(row => {
+    for (const row of rows) {
       const adInfo   = adMap[row.dimensions.ad_id] || {};
       const campInfo = campMap[adInfo.campaign_id]  || {};
       const agInfo   = agMap[adInfo.adgroup_id]     || {};
-      return mapRecord(row, adInfo, campInfo, agInfo, adv.name, tz, updateTime);
-    }));
+      allRows.push(recordToRow(row, adInfo, campInfo, agInfo, adv.name, tz, updateTime, ++seq));
+    }
   }
 
-  // Clear then write
-  console.log('Clearing old data...');
-  const cleared = await clearTable(feishuToken);
-  console.log(`  cleared ${cleared} records`);
+  if (!allRows.length) { console.log('No data to write.'); return; }
 
-  if (!allRecords.length) { console.log('No data to write.'); return; }
-
-  console.log(`Writing ${allRecords.length} records...`);
-  await batchCreate(feishuToken, allRecords);
+  console.log(`Writing ${allRows.length} rows...`);
+  await writeDataRows(allRows, currentRowCount, feishuToken);
   console.log('Done.');
 }
 
