@@ -21,6 +21,17 @@ const ROW_BUFFER = 200;
 const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
 
+// Games that are advertised but absent from 产品数据原表 (no product data), with
+// their manually-assigned 项目组. Used to label 项目组 in 投放 dimension tables.
+const EXTRA_GROUP_MAP = {
+  'Gears Wars': '齿轮',
+  'Gear Fight': '齿轮',
+  'Ball Strike': '齿轮',
+  'Merge Tanks': '战车',
+  'Snake': '贪吃蛇',
+  'Snake King Battle': '贪吃蛇',
+};
+
 function feishuReq(method, path, token, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
@@ -191,7 +202,10 @@ async function getGroupMapping(token) {
     if (!has || rows.length < 500) break;
     startRow += 500;
   }
-  return { groups, groupGames };
+  // game → group from product table (product groups only)
+  const gameToGroup = {};
+  for (const grp of groups) for (const g of groupGames[grp]) gameToGroup[g] = grp;
+  return { groups, groupGames, gameToGroup };
 }
 
 async function ensureProjectSummary(token) {
@@ -214,11 +228,14 @@ async function ensureProjectSummary(token) {
   const targetRow = dayCount * N + 1 + ROW_BUFFER;
   console.log(`  项目维度经营表: ${dayCount} 天 × ${N} 组, 填充 2..${targetRow}`);
 
-  // helper columns: today spend (N) then cumulative spend (N), starting at col 18 (R)
+  // helper columns: today spend (N), cumulative spend (N), sort key (N), pos (1)
   const TODAY0 = 18;                       // R
-  const CUM0 = TODAY0 + N;                  // R+N
+  const CUM0 = TODAY0 + N;
+  const KEY0 = CUM0 + N;
+  const POScol = colLetter(KEY0 + N);
   const todayCols = Array.from({ length: N }, (_, k) => colLetter(TODAY0 + k));
   const cumCols = Array.from({ length: N }, (_, k) => colLetter(CUM0 + k));
+  const keyCols = Array.from({ length: N }, (_, k) => colLetter(KEY0 + k));
 
   const PD = `${PROD}!$D$2:$D$5000`, PAB = `${PROD}!$AB$2:$AB$5000`, PE = `${PROD}!$E$2:$E$5000`, PB = `${PROD}!$B$2:$B$5000`;
   const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`, AB = `${ADS}!$B$2:$B$5000`;
@@ -232,6 +249,8 @@ async function ensureProjectSummary(token) {
   const rank = r => `(MOD(${r}-2,${N})+1)`;
   const todayRange = r => `$${todayCols[0]}${r}:$${todayCols[N - 1]}${r}`;
   const cumRange = r => `$${cumCols[0]}${r}:$${cumCols[N - 1]}${r}`;
+  const keyRange = r => `$${keyCols[0]}${r}:$${keyCols[N - 1]}${r}`;
+  const pos = r => `$${POScol}${r}`;
   const ifGrp = (r, body) => `=IF($${aCol}${r}="","",${body})`;  // guard on 项目组 resolved
 
   const plan = {};
@@ -243,22 +262,30 @@ async function ensureProjectSummary(token) {
   cumCols.forEach((col, k) => {
     plan[col] = r => `=IF(${invalid(r)},"",SUMPRODUCT(ISNUMBER(MATCH(${AB},${gamesArr[k]},0))*(DATEVALUE(${AD})<=${dser(r)})*${AE}))`;
   });
-  // visible columns by header name
+  // helper: sort key = today spend * 1e5 + (N-1-k) tiebreak, so equal spends
+  // (e.g. multiple 0s) still produce N distinct keys → no group dropped.
+  keyCols.forEach((col, k) => {
+    plan[col] = r => `=IF(${invalid(r)},"",$${todayCols[k]}${r}*100000+${N - 1 - k})`;
+  });
+  // helper: position of the rank-th highest key within this row's N groups
+  plan[POScol] = r => `=IF(${invalid(r)},"",MATCH(LARGE(${keyRange(r)},${rank(r)}),${keyRange(r)},0))`;
+
+  // visible columns by header name (use POS to pick the group/spend/cum)
   plan[bCol] = r => `=IF(${invalid(r)},"",${dser(r)})`;                                   // 统计周期
-  plan[cCol] = r => `=IF(${invalid(r)},"",LARGE(${todayRange(r)},${rank(r)}))`;           // 消耗 (rank-th highest)
-  plan[aCol] = r => `=IF(${invalid(r)},"",INDEX(${groupsArr},MATCH($${cCol}${r},${todayRange(r)},0)))`; // 项目组
+  plan[aCol] = r => `=IF(${pos(r)}="","",INDEX(${groupsArr},${pos(r)}))`;                 // 项目组
+  plan[cCol] = r => `=IF(${pos(r)}="","",INDEX(${todayRange(r)},${pos(r)}))`;             // 消耗 (real value)
   plan[dCol] = r => ifGrp(r, `SUMIFS(${PAB},${PB},$${aCol}${r},${PD},${dtxt(r)})`);       // 广告总收入
   plan[eCol] = r => ifGrp(r, `IFERROR($${dCol}${r}/$${cCol}${r},"")`);                    // 当日 ROAS
-  plan[fCol] = r => ifGrp(r, `INDEX(${cumRange(r)},MATCH($${aCol}${r},${groupsArr},0))`); // 累计消耗
+  plan[fCol] = r => ifGrp(r, `INDEX(${cumRange(r)},${pos(r)})`);                          // 累计消耗
   plan[gCol] = r => ifGrp(r, `SUMPRODUCT((${PB}=$${aCol}${r})*(DATEVALUE(${PD})<=${dser(r)})*${PAB})`); // 累计收入
   plan[hCol] = r => ifGrp(r, `IFERROR($${gCol}${r}/$${fCol}${r},"")`);                    // 累计 ROI
   plan[iCol] = r => ifGrp(r, `SUMIFS(${PE},${PB},$${aCol}${r},${PD},${dtxt(r)})`);        // 新增用户
 
   await writeFormulas(token, PROJECT_SHEET_ID, targetRow, plan);
   await applyFormats(token, PROJECT_SHEET_ID, targetRow, bCol, [eCol, hCol]);
-  // hide helper columns (today spend + cumulative spend)
+  // hide helper columns (today/cum/key spend + pos)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: CUM0 + N - 1 },
+    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: KEY0 + N },
       dimensionProperties: { visible: false } }).catch(() => {});
   return targetRow;
 }
@@ -301,6 +328,11 @@ async function ensureAdProductSummary(token) {
         actCol = need('活跃度'), apcCol = need('人均广告次数');
 
   const { adRowCount, posCount } = await getAdProductInfo(token);
+  const { gameToGroup } = await getGroupMapping(token);
+  const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };  // product groups + manual extras
+  const mapGames = Object.keys(fullMap);
+  const gamesArr = `{${mapGames.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
+  const groupsArr = `{${mapGames.map(x => `"${fullMap[x]}"`).join(',')}}`;
   const helperRows = adRowCount + 1 + 500;     // covers ad rows + growth
   const mainRows = posCount + 1 + 150;          // visible rows + buffer
   console.log(`  投放日表-产品维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
@@ -327,7 +359,7 @@ async function ensureAdProductSummary(token) {
     [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
     [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
     [seqCol]: r => `=IF(${g(r)}="","",ROW()-1)`,
-    [grpCol]: r => ifg(r, `IFERROR(INDEX(${PROD}!$B$2:$B$5000,MATCH(${g(r)},${PROD}!$C$2:$C$5000,0)),"")`),
+    [grpCol]: r => ifg(r, `IFERROR(INDEX(${groupsArr},MATCH(${g(r)},${gamesArr},0)),"")`),
     [actCol]: r => ifg(r, `SUMIFS(${AG},${AB},${g(r)},${AD},${dt(r)})`),
     [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/$${actCol}${r},"")`),
     [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
