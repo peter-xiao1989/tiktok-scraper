@@ -22,7 +22,7 @@ const ROW_BUFFER = 200;
 const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })();
 
-function feishuReq(method, path, token, body) {
+function feishuReqOnce(method, path, token, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
@@ -36,6 +36,17 @@ function feishuReq(method, path, token, body) {
     req.on('error', reject);
     if (data) req.write(data); req.end();
   });
+}
+
+// Retry on Feishu rate-limit (90217 too many request) / transient errors, with backoff.
+async function feishuReq(method, path, token, body) {
+  for (let attempt = 1; ; attempt++) {
+    let r;
+    try { r = await feishuReqOnce(method, path, token, body); }
+    catch (e) { if (attempt >= 6) throw e; await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
+    if (r && r.code === 90217 && attempt < 6) { await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
+    return r;
+  }
 }
 
 async function getFeishuToken() {
