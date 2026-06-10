@@ -36,7 +36,7 @@ TikTok realtime ──realtime(每小时*)─────────┘
 
 ## 速查
 
-- 电子表格 token(**代码实际用这个**):`J8mswO2vziyIAAkdt4rcVeaDnog`(wiki node;原生 token 是 `K8tgsrOpFhxjy3tgDHscJ5jonHh`,但 API 调用用 wiki node 即可)
+- 电子表格(两个 token 等效,指同一张表):wiki node `J8mswO2vziyIAAkdt4rcVeaDnog`(node 代码 SPREADSHEET_TOKEN 用这个) / 原生 `K8tgsrOpFhxjy3tgDHscJ5jonHh`(python lark-cli 用这个)
 - sheet id:投放原表 uqJEhq / 产品原表 c50205 / 分时原表 jArZTX / 日经营 wAsSso / 项目维度 JIKPZV / 各产品日报 6B1PVx / 投放日报-产品 kX0M0R / 投放日报-素材 TOBfe9 / 分时素材 dbGqhL / 产品id及链接 juQobR
 - 多维表「TT经营数据中心」:`YB8TbS45kaO1gesMtqlc8kpznEb`(用户身份建;旧 base HCXKb… 用户自维护勿动)
 - 游戏选品群:`oc_0d077d9ba6ce793a835b546bd9dbb9e6`
