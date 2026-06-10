@@ -14,15 +14,16 @@
  *   REPO            e.g. "peter-xiao1989/tiktok-scraper"
  */
 
-const CRON_TO_WORKFLOW = {
-  '0 8 * * *': 'daily-product.yml',   // 16:00 BJT
-  '0 23 * * *': 'daily-ads.yml',      // 07:00 BJT
-};
-
 export default {
   async scheduled(event, env, ctx) {
-    const workflow = CRON_TO_WORKFLOW[event.cron];
-    if (!workflow) return;
+    // One cron "0 8,23 * * *" fires at both 08:00 and 23:00 UTC (free plan caps
+    // cron triggers, so we use a single trigger). event.cron is the whole string,
+    // so route by the fired hour instead.
+    const hour = new Date(event.scheduledTime).getUTCHours();
+    const workflow = hour === 8 ? 'daily-product.yml'   // 16:00 BJT
+                   : hour === 23 ? 'daily-ads.yml'      // 07:00 BJT
+                   : null;
+    if (!workflow) { console.log(`unexpected hour ${hour}, skip`); return; }
 
     const res = await fetch(
       `https://api.github.com/repos/${env.REPO}/actions/workflows/${workflow}/dispatches`,
