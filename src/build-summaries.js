@@ -134,6 +134,21 @@ function buildPlan(header, maxSerial, minSerial) {
   return { plan, dateCol: dCol, roasCols: [L['当日广告收入 ROAS (TikTok)'], L['TT累计ROI']].filter(Boolean) };
 }
 
+// Grow the sheet if the plan needs more rows/columns than it has.
+async function ensureGrid(token, sheetId, minRows, minCols) {
+  const meta = await feishuReq('GET',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/metainfo`, token);
+  const sh = (meta.data?.sheets || []).find(x => x.sheetId === sheetId);
+  if (!sh) return;
+  const addRows = minRows - sh.rowCount, addCols = minCols - sh.columnCount;
+  for (const [dim, count] of [['ROWS', addRows], ['COLUMNS', addCols]]) {
+    if (count > 0) {
+      await feishuReq('POST', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+        { dimension: { sheetId, majorDimension: dim, length: count } });
+    }
+  }
+}
+
 async function writeFormulas(token, sheetId, targetRow, plan) {
   for (const [col, gen] of Object.entries(plan)) {
     const values = [];
@@ -222,27 +237,23 @@ async function ensureDailySummary(token) {
 
 const PROJECT_SHEET_ID = 'JIKPZV';
 
-// Read 产品数据原表 B(项目组) C(游戏) → ordered groups + group→games map.
+// Read 产品id及链接 A(项目组) B(产品名) → ordered groups + group→games map.
+// (User-maintained roster; covers 投放-only groups like 齿轮/战车 that never
+// appear in 产品数据原表.)
 async function getGroupMapping(token) {
   const groups = [];
   const groupGames = {};
-  let startRow = 2;
-  while (true) {
+  {
     const r = await feishuReq('GET',
-      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/c50205!B${startRow}:C${startRow + 499}`, token);
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/juQobR!A2:B200`, token);
     const rows = r.data?.valueRange?.values || [];
-    if (!rows.length) break;
-    let has = false;
     for (const row of rows) {
       const grp = row[0], game = row[1];
       if (grp && game) {
-        has = true;
         if (!groupGames[grp]) { groupGames[grp] = []; groups.push(grp); }
         if (!groupGames[grp].includes(game)) groupGames[grp].push(game);
       }
     }
-    if (!has || rows.length < 500) break;
-    startRow += 500;
   }
   // game → group from product table (product groups only)
   const gameToGroup = {};
@@ -260,7 +271,7 @@ async function ensureProjectSummary(token) {
     throw new Error(`项目维度经营表缺少表头: ${names.join(' / ')}`);
   };
   const aCol = need('项目组'), bCol = need('统计周期'), cCol = need('消耗'), dCol = need('广告总收入'),
-        eCol = need('当日广告收入 ROAS (TikTok)'), fCol = need('项目累计消耗', '累计消耗'),
+        eCol = need('当日广告收入 ROAS (TikTok)', '广告收入 ROAS (TikTok)'), fCol = need('项目累计消耗', '累计消耗'),
         gCol = need('项目累计收入', '累计收入'), hCol = need('项目累计ROI', 'TT累计ROI'), iCol = need('新增用户');
 
   const { dayCount, maxSerial, minSerial } = await getProductDateInfo(token);
@@ -269,6 +280,7 @@ async function ensureProjectSummary(token) {
   if (N === 0) throw new Error('无项目组');
   const targetRow = dayCount * N + 1 + ROW_BUFFER;
   console.log(`  项目维度经营表: ${dayCount} 天 × ${N} 组, 填充 2..${targetRow}`);
+  await ensureGrid(token, PROJECT_SHEET_ID, targetRow + 5, 18 + 4 * N + 1);
 
   // helper columns: today spend (N), cumulative spend (N), sort key (N), pos (1)
   const TODAY0 = 18;                       // R
