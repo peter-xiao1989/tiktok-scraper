@@ -4,7 +4,7 @@
 列布局: A=类别 B=更新时间 C=项目组 D=游戏名称 E=出价方式
         F=消耗 G=ROAS H=活跃度平均成本 I=活跃度 J=人均广告次数
 """
-import json, subprocess, re, sys, os
+import json, subprocess, re, sys, os, time
 from collections import defaultdict
 
 SPREADSHEET_TOKEN = "K8tgsrOpFhxjy3tgDHscJ5jonHh"
@@ -22,8 +22,13 @@ def lark(args):
     base = ["lark-cli", "--format", "json"]
     if BOT_MODE:
         base += ["--as", "bot"]
-    r = subprocess.run(base + args, capture_output=True, text=True, env=ENV)
-    return json.loads(r.stdout or r.stderr or '{}')
+    for attempt in range(1, 7):
+        r = subprocess.run(base + args, capture_output=True, text=True, env=ENV)
+        d = json.loads(r.stdout or r.stderr or '{}')
+        if d.get('code') == 90217 and attempt < 6:  # Feishu rate-limit → back off & retry
+            time.sleep(0.5 * attempt)
+            continue
+        return d
 
 def cells_set(rng, cells):
     return lark(["sheets", "+cells-set",
