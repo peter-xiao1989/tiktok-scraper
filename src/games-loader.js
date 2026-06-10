@@ -1,15 +1,17 @@
 const https = require('https');
 
-const BITABLE_APP  = process.env.FEISHU_BITABLE_TOKEN || 'HCXKb9qoDaiEmqsl4cocOnNPnpb';
-const PRODUCT_TABLE = 'tblPWZSoCf4Tqd4n';
+// Game list lives in the 产品id及链接 sheet (项目组 | 产品名 | id), which the user
+// maintains and which includes the 齿轮/战车 games — unlike the old Bitable.
+const SPREADSHEET_TOKEN = 'J8mswO2vziyIAAkdt4rcVeaDnog';
+const GAMES_SHEET_ID    = 'juQobR';
 
 function httpGet(path, token) {
   return new Promise((resolve, reject) => {
     const req = https.request({ hostname: 'open.feishu.cn', path, method: 'GET',
       headers: { 'Authorization': 'Bearer ' + token }
     }, res => {
-      let buf = ''; res.on('data', c => buf += c);
-      res.on('end', () => { try { resolve(JSON.parse(buf)); } catch { resolve(buf); } });
+      const chunks = []; res.on('data', c => chunks.push(c));
+      res.on('end', () => { const buf = Buffer.concat(chunks).toString('utf8'); try { resolve(JSON.parse(buf)); } catch { resolve(buf); } });
     });
     req.on('error', reject); req.end();
   });
@@ -36,15 +38,15 @@ async function getTenantToken(appId, appSecret) {
 async function loadGames(appId, appSecret) {
   const token = await getTenantToken(appId, appSecret);
   const res = await httpGet(
-    `/open-apis/bitable/v1/apps/${BITABLE_APP}/tables/${PRODUCT_TABLE}/records?page_size=100`,
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${GAMES_SHEET_ID}!A2:C200`,
     token
   );
-  const items = res.data?.items || [];
-  return items
+  const rows = res.data?.valueRange?.values || [];
+  return rows
     .map(r => ({
-      group: r.fields['项目组'] || '',
-      name:  r.fields['产品名'] || '',
-      id:    r.fields['id'] || '',
+      group: (r[0] == null ? '' : String(r[0])).trim(),
+      name:  (r[1] == null ? '' : String(r[1])).trim(),
+      id:    (r[2] == null ? '' : String(r[2])).trim(),
     }))
     .filter(g => g.id && g.name);
 }
