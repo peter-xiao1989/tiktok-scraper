@@ -2,12 +2,10 @@ name = "tiktok-scraper-scheduler"
 main = "worker.js"
 compatibility_date = "2024-12-01"
 
-# Single cron (free plan caps total triggers per account). Fires hourly at the
-# hours we need; the worker routes by the fired UTC hour (see worker.js):
-#   even hours 0,2,..22 → realtime.yml (分时, 每2小时); 08 also → daily-product
-#   23                  → daily-ads.yml (07:00 BJT)
+# Single cron, fires every hour; the worker routes by the fired UTC hour (see
+# worker.js): every hour → realtime.yml; 08 also → daily-product; 23 → daily-ads.
 [triggers]
-crons = ["0 0,2,4,6,8,10,12,14,16,18,20,22,23 * * *"]
+crons = ["0 * * * *"]
 
 [vars]
 REPO = "peter-xiao1989/tiktok-scraper"
