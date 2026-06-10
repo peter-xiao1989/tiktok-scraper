@@ -107,7 +107,8 @@ function buildPlan(header, gameList, groupList, maxSerial, minSerial, projCols) 
     if (!v) throw new Error(`日报表缺少必需表头列: ${n}`);
   }
   const G = gameList.length;
-  const HELP0 = 20;                                   // helper cols start at T(20)
+  const lastHdr = header.reduce((m, h, j) => (h ? j + 1 : m), 0);
+  const HELP0 = lastHdr + 3;                          // helper cols start after the visible header (+2 gap)
   const keyCols = Array.from({ length: G }, (_, k) => colLetter(HELP0 + k));
   const POSc = colLetter(HELP0 + G), SHOWc = colLetter(HELP0 + G + 1);
   const gameArr = `{${gameList.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
@@ -248,7 +249,7 @@ async function applyFilter(token, targetRow, showCol) {
 }
 
 async function ensureReportFormulas(token) {
-  const { applyColumnFormats, wrapDecimals, getGroupMapping, getProductDateInfo } = require('./build-summaries');
+  const { applyColumnFormats, wrapDecimals, getGroupMapping, getProductDateInfo, ensureGrid } = require('./build-summaries');
   const header = await readHeader(token);
   const { groups, groupGames } = await getGroupMapping(token);
   const gameList = [], groupList = [];
@@ -263,6 +264,7 @@ async function ensureReportFormulas(token) {
   const spanDays = Math.max(1, maxSerial - minSerial + 1);
   const targetRow = spanDays * G + 1 + ROW_BUFFER;
   console.log(`  日报表网格: ${gameList.length} 游戏 × ${spanDays} 天, 填充 2..${targetRow}`);
+  await ensureGrid(token, REPORT_SHEET_ID, targetRow + 5, helpEnd + 1);
   wrapDecimals(plan, header);
   await writeFormulas(token, targetRow, plan);
   await applyColumnFormats(token, REPORT_SHEET_ID, header, targetRow);
