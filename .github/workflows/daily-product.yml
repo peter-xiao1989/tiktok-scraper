@@ -57,3 +57,14 @@ jobs:
           name: login-debug
           path: data/*.png
           if-no-files-found: ignore
+
+      - name: Notify failure to Feishu
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          [ -z "$FEISHU_WEBHOOK" ] && echo "no FEISHU_WEBHOOK configured, skip" && exit 0
+          BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ 产品数据(16点)抓取失败\n时间: $BJT BJT\n查看: $URL\"}}"

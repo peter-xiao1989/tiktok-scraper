@@ -41,3 +41,14 @@ jobs:
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
           TARGET_DATE:         ${{ github.event.inputs.target_date }}
         run: npm run ads-api
+
+      - name: Notify failure to Feishu
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          [ -z "$FEISHU_WEBHOOK" ] && echo "no FEISHU_WEBHOOK configured, skip" && exit 0
+          BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ 投放数据(7点)抓取失败\n时间: $BJT BJT\n查看: $URL\"}}"
