@@ -286,19 +286,11 @@ async function main() {
 
   const feishuToken = await getFeishuToken();
 
-  if (process.env.CLEAR_BEFORE === 'true') {
+  const isClear = process.env.CLEAR_BEFORE === 'true';
+  if (isClear) {
     console.log('Clearing product sheet data...');
     await clearSheetData(feishuToken);
-  } else {
-    // Overwrite the target dates: delete their existing rows so the scheduled
-    // 16:00 run replaces any early/partial scrape instead of dedup-skipping it.
-    console.log('Overwriting target dates (delete existing rows in range)...');
-    await deleteRowsByDates(feishuToken, new Set(dates));
   }
-
-  console.log('Loading existing keys for dedup...');
-  const existingKeys = await getExistingKeys(feishuToken);
-  console.log(`  ${existingKeys.size} existing game-date pairs`);
 
   let lastSeq = await getLastSeq(feishuToken);
   console.log(`  Last seq: ${lastSeq}`);
@@ -311,29 +303,30 @@ async function main() {
   const portalCookies = getCookieHeader(authState, 'developers.tiktok.com');
   const dataCookies   = getCookieHeader(authState, 'developers.us.tiktok.com');
 
+  // Scrape everything first; we only touch the sheet AFTER a successful scrape,
+  // so a failed login can never delete a day's rows without re-writing them.
   const allRows = [];
   for (const date of dates) {
     process.stdout.write(`\n[${date}] scraping ${games.length} games...\n`);
     const results = await scrapeAll(games, date, portalCookies, dataCookies);
-
     for (const result of results) {
       if (!result.ok) continue;
-      const row = result.row;
-      const key = `${row.游戏名称}|${date}`;
-      if (existingKeys.has(key)) {
-        console.log(`  [${row.游戏名称}] already exists, skipped`);
-        continue;
-      }
-      allRows.push(recordToRow(row, ++lastSeq));
-      existingKeys.add(key);
+      allRows.push(recordToRow(result.row, ++lastSeq));
     }
   }
 
   if (allRows.length) {
-    console.log(`\nWriting ${allRows.length} rows...`);
+    // Overwrite the target dates: delete their old rows (the early/partial scrape)
+    // now that we have fresh settled data, then append. Skipped on CLEAR_BEFORE
+    // (sheet already emptied).
+    if (!isClear) {
+      console.log('\nReplacing target-date rows (delete old, then append fresh)...');
+      await deleteRowsByDates(feishuToken, new Set(dates));
+    }
+    console.log(`Writing ${allRows.length} rows...`);
     await appendRows(allRows, feishuToken);
   } else {
-    console.log('\nNo new product rows.');
+    console.log('\nNo product rows scraped — keeping existing data (no delete).');
   }
 
   // Rewrite derived tables so Feishu recalcs them against the new 产品 data
