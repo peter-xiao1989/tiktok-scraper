@@ -3,10 +3,10 @@ name: Realtime Ad Data (hourly via worker)
 on:
   schedule:
     # Backup only. The Cloudflare worker triggers realtime hourly on the hour
-    # (punctual); this is a low-frequency fallback (every 3h at :10) for when
+    # (punctual); this is a low-frequency fallback (every 2h at :10) for when
     # the worker is down. Full refresh is idempotent, so an overlapping/missed
-    # fire is harmless — this just caps the gap at ~3h without the worker.
-    - cron: '10 */3 * * *'
+    # fire is harmless — this just caps the gap at ~2h without the worker.
+    - cron: '10 */2 * * *'
   workflow_dispatch:
     inputs:
       target_date:
