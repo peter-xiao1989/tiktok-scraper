@@ -69,7 +69,10 @@ const FIELD_SRC = {
   '游戏名称': { kind: 'game' },
   '消耗': { kind: 'spend' },
   '广告收入 ROAS (TikTok)': { kind: 'roas' },
+  '活跃度': { kind: 'activity' },
   '活跃度平均成本': { kind: 'activecost' },
+  '人均广告次数': { kind: 'apc' },
+  '点击率（目标页面）': { kind: 'ctr' },
   '运营新增成本': { kind: 'opcost' },
   '新增用户': { kind: 'prod', col: 'E' },
   '活跃用户': { kind: 'prod', col: 'F' },
@@ -132,6 +135,9 @@ function buildPlan(header, gameList, groupList, maxSerial, minSerial, projCols) 
     spend: r => `=IF($${gCol}${r}="","",${sumifs('E', r)})`,
     roas: r => `=IF($${gCol}${r}="","",IFERROR(SUMPRODUCT((${ADS}!$B$2:$B$5000=$${gCol}${r})*(${ADS}!$D$2:$D$5000=TEXT($${dCol}${r},"yyyy-MM-dd"))*${ADS}!$F$2:$F$5000*${ADS}!$E$2:$E$5000)/$${eCol}${r},""))`,
     activecost: r => `=IF($${gCol}${r}="","",IFERROR($${eCol}${r}/${sumifs('G', r)},""))`,
+    activity: r => `=IF($${gCol}${r}="","",${sumifs('G', r)})`,
+    apc: r => `=IF($${gCol}${r}="","",IFERROR(SUMPRODUCT((${ADS}!$B$2:$B$5000=$${gCol}${r})*(${ADS}!$D$2:$D$5000=TEXT($${dCol}${r},"yyyy-MM-dd"))*IFERROR(VALUE(${ADS}!$G$2:$G$5000),0)*IFERROR(VALUE(${ADS}!$I$2:$I$5000),0))/${sumifs('G', r)},""))`,
+    ctr: r => `=IF($${gCol}${r}="","",IFERROR(${sumifs('X', r)}/${sumifs('Y', r)},""))`,
     opcost: r => `=IF($${gCol}${r}="","",IFERROR($${eCol}${r}/$${nCol}${r},""))`,
   };
   const plan = {};
