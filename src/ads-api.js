@@ -324,23 +324,28 @@ async function readSheetRange(sheetId, range, token) {
   return r.data?.valueRange?.values || [];
 }
 
-// Build dedup set from existing sheet data (columns D=按天, N=账户名称)
-// Reads D:N together in one request per batch to avoid concurrent request issues
-// Key format: "accountName|YYYY-MM-DD"
+// Build dedup sets from existing sheet data.
+// - dayKeys: "账户|YYYY-MM-DD" — skip whole already-imported account-days (fast path)
+// - rowKeys: 7-dim "日期|游戏|系列|广告组|广告名|素材|账户" — row-level guard so a
+//   concurrent/partial run can never write the same ad twice (the historical
+//   source of duplicate rows). Same key format used by rowKeyOf() below.
 async function getExistingKeys(token) {
-  const keys = new Set();
+  const dayKeys = new Set();
+  const rowKeys = new Set();
   let startRow = 2;
   while (true) {
     const endRow = startRow + 499;
-    // Read D through N in a single request (11 cols); D=index 0, N=index 10
-    const rows = await readSheetRange(ADS_SHEET_ID, `D${startRow}:N${endRow}`, token);
+    // Read B..S (18 cols): B游戏0 C系列1 D按天2 M素材11 N账户12 Q广告组15 S广告名17
+    const rows = await readSheetRange(ADS_SHEET_ID, `B${startRow}:S${endRow}`, token);
     if (!rows.length) break;
     let hasData = false;
     for (const row of rows) {
-      const d = row[0];   // D 按天
-      const n = row[10];  // N 账户名称
+      const d = row[2], n = row[12];
       if (d != null && d !== '' && n) {
-        keys.add(`${n}|${toISO(d)}`);
+        const iso = toISO(d);
+        dayKeys.add(`${n}|${iso}`);
+        rowKeys.add([iso, row[0], row[1], row[15], row[17], row[11], n]
+          .map(x => String(x ?? '').trim()).join('|'));
         hasData = true;
       }
     }
@@ -350,7 +355,14 @@ async function getExistingKeys(token) {
     startRow += 500;
   }
   process.stdout.write('\n');
-  return keys;
+  return { dayKeys, rowKeys };
+}
+
+// 7-dim row key for a freshly built sheet row (recordToRow output, 0-based):
+// 1游戏 2系列 3按天 12素材 13账户 16广告组 18广告名
+function rowKeyOf(row) {
+  return [toISO(row[3]), row[1], row[2], row[16], row[18], row[12], row[13]]
+    .map(x => String(x ?? '').trim()).join('|');
 }
 
 // Get last seq number (column A)
@@ -456,8 +468,8 @@ async function main() {
   }
 
   console.log('Loading existing keys for dedup...');
-  const existingKeys = await getExistingKeys(feishuToken);
-  console.log(`  ${existingKeys.size} existing account-date pairs`);
+  const { dayKeys: existingKeys, rowKeys } = await getExistingKeys(feishuToken);
+  console.log(`  ${existingKeys.size} account-date pairs, ${rowKeys.size} row keys`);
 
   let lastSeq = await getLastSeq(feishuToken);
   console.log(`  Last seq: ${lastSeq}`);
@@ -502,7 +514,12 @@ async function main() {
         row._agInfo         = agMap[row._adInfo.adgroup_id] || {};
         row._advertiserName = adv.name;
         row._tz             = tz;
-        allRows.push(recordToRow(row, ++lastSeq));
+        const sheetRow = recordToRow(row, lastSeq + 1);
+        const rk = rowKeyOf(sheetRow);
+        if (rowKeys.has(rk)) continue;   // row-level 7-dim dedup (incl. within this run)
+        rowKeys.add(rk);
+        lastSeq++;
+        allRows.push(sheetRow);
       }
       existingKeys.add(key);
 
