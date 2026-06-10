@@ -71,28 +71,32 @@ function dateToSerial(text) {
   return Math.round(ms / 86400000) + 25569;
 }
 
-// Scan 产品数据原表!D, return { dayCount, maxSerial, minSerial }.
-// 产品数据原表!D holds TEXT dates, so Feishu MAX/DATEVALUE-over-range fails to
-// array-evaluate; we compute the serials here and write them as plain values.
+// Scan date columns and return { dayCount, maxSerial, minSerial } over the
+// UNION of 产品数据原表!D and 投放数据原表!D — so day-keyed tables (日经营汇总,
+// 项目维度经营表) get a row for the latest 投放 day even before 产品 data lands.
+// Both columns hold TEXT dates, so we compute serials here (Feishu can't
+// array-evaluate DATEVALUE over a range).
 async function getProductDateInfo(token) {
   const days = new Set();
-  let maxS = -Infinity, minS = Infinity, startRow = 2;
-  while (true) {
-    const r = await feishuReq('GET',
-      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/c50205!D${startRow}:D${startRow + 499}`, token);
-    const rows = r.data?.valueRange?.values || [];
-    if (!rows.length) break;
-    let has = false;
-    for (const row of rows) {
-      const v = row[0];
-      if (v != null && v !== '') {
-        days.add(String(v)); has = true;
-        const s = dateToSerial(v);
-        if (s != null) { if (s > maxS) maxS = s; if (s < minS) minS = s; }
+  let maxS = -Infinity, minS = Infinity;
+  for (const sheet of ['c50205', 'uqJEhq']) {
+    let startRow = 2;
+    while (true) {
+      const r = await feishuReq('GET',
+        `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheet}!D${startRow}:D${startRow + 499}`, token);
+      const rows = r.data?.valueRange?.values || [];
+      if (!rows.length) break;
+      let has = false;
+      for (const row of rows) {
+        const v = row[0];
+        if (v != null && v !== '') {
+          const s = dateToSerial(v);
+          if (s != null) { days.add(s); has = true; if (s > maxS) maxS = s; if (s < minS) minS = s; }
+        }
       }
+      if (!has || rows.length < 500) break;
+      startRow += 500;
     }
-    if (!has || rows.length < 500) break;
-    startRow += 500;
   }
   return { dayCount: days.size, maxSerial: isFinite(maxS) ? maxS : 0, minSerial: isFinite(minS) ? minS : 0 };
 }
@@ -402,7 +406,8 @@ async function ensureAdProductSummary(token) {
     [actCol]: r => ifg(r, `SUMIFS(${AG},${AB},${g(r)},${AD},${dt(r)})`),
     [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/$${actCol}${r},"")`),
     [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
-    [apcCol]: r => ifg(r, `IFERROR(SUMIFS(${AAD},${AB},${g(r)},${AD},${dt(r)})/$${actCol}${r},"")`),
+    // 人均广告次数 = Σgross / Σengaged; engaged reconstructed as gross/投放!I per row
+    [apcCol]: r => ifg(r, `IFERROR(SUMIFS(${AAD},${AB},${g(r)},${AD},${dt(r)})/SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(N(${ADS}!$I$2:$I$5000)>0)*${AAD}/(N(${ADS}!$I$2:$I$5000)+(N(${ADS}!$I$2:$I$5000)=0))),"")`),
   };
 
   // write helper columns (rows 2..helperRows)
@@ -510,7 +515,8 @@ async function ensureAdMaterialSummary(token) {
     [roasCol]: r => ifm(r, `IFERROR(SUMPRODUCT((${AM}=${m(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
     [ctrCol]: r => ifm(r, `IFERROR(${sif(AX, r)}/$${impCol}${r},"")`),
     [cpmCol]: r => ifm(r, `IFERROR($${spendCol}${r}/$${impCol}${r}*1000,"")`),
-    [apcCol]: r => ifm(r, `IFERROR(${sif(AAD, r)}/${sif(AG, r)},"")`),
+    // 人均广告次数 = Σgross / Σengaged; engaged = gross/投放!I per row
+    [apcCol]: r => ifm(r, `IFERROR(${sif(AAD, r)}/SUMPRODUCT((${AM}=${m(r)})*(${AD}=${dt(r)})*(N(${ADS}!$I$2:$I$5000)>0)*${AAD}/(N(${ADS}!$I$2:$I$5000)+(N(${ADS}!$I$2:$I$5000)=0))),"")`),
   };
 
   await writeCols(token, AD_MATERIAL_SHEET_ID, helperPlan, helperRows);
@@ -596,7 +602,8 @@ async function ensureAdBidSummary(token) {
     [actCol]: r => ifg(r, sif(AG, r)),
     [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/${sif(AG, r)},"")`),
     [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(${AAT}=${bd(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
-    [apcCol]: r => ifg(r, `IFERROR(${sif(AAD, r)}/${sif(AG, r)},"")`),
+    // 人均广告次数 = Σgross / Σengaged; engaged = gross/投放!I per row (game+date+bid)
+    [apcCol]: r => ifg(r, `IFERROR(${sif(AAD, r)}/SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(${AAT}=${bd(r)})*(N(${ADS}!$I$2:$I$5000)>0)*${AAD}/(N(${ADS}!$I$2:$I$5000)+(N(${ADS}!$I$2:$I$5000)=0))),"")`),
   };
 
   wrapDecimals(mainPlan, header);

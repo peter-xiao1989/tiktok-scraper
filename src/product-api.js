@@ -289,44 +289,10 @@ async function main() {
     console.log('\nNo new product rows.');
   }
 
-  // 项目维度经营表 first — the 日报表 sort key reads its group-day 消耗.
-  try {
-    console.log('Maintaining 项目维度经营表...');
-    await ensureProjectSummary(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] project summary maintenance: ${e.message}`);
-  }
-  // Maintain 产品经营日报表 (group rows ordered by 项目维度经营表's day spend).
-  try {
-    console.log('Maintaining 产品经营日报表...');
-    await ensureReportFormulas(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] report maintenance: ${e.message}`);
-  }
-  try {
-    console.log('Maintaining 日经营数据汇总...');
-    await ensureDailySummary(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] daily summary maintenance: ${e.message}`);
-  }
-  try {
-    console.log('Maintaining 投放日表-产品维度...');
-    await ensureAdProductSummary(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] ad-product summary maintenance: ${e.message}`);
-  }
-  try {
-    console.log('Maintaining 投放日表-素材维度...');
-    await ensureAdMaterialSummary(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] ad-material summary maintenance: ${e.message}`);
-  }
-  try {
-    console.log('Maintaining 投放日表-出价维度...');
-    await ensureAdBidSummary(feishuToken);
-  } catch (e) {
-    console.warn(`[warn] ad-bid summary maintenance: ${e.message}`);
-  }
+  // Rewrite derived tables so Feishu recalcs them against the new 产品 data
+  // (Feishu doesn't auto-recalc formulas when source data is written via API).
+  const { maintainAllDerived } = require('./maintain-derived');
+  await maintainAllDerived(feishuToken);
   console.log('Done.');
 }
 

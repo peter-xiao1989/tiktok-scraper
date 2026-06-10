@@ -504,11 +504,18 @@ async function main() {
     }
   }
 
-  if (!allRows.length) { console.log('Nothing to write.'); await setRoasFormat(feishuToken); return; }
-
-  console.log(`Writing ${allRows.length} rows...`);
-  await appendRows(allRows, feishuToken);
+  if (allRows.length) {
+    console.log(`Writing ${allRows.length} rows...`);
+    await appendRows(allRows, feishuToken);
+  } else {
+    console.log('Nothing to write.');
+  }
   await setRoasFormat(feishuToken);
+
+  // Rewrite derived tables so Feishu recalcs them against the new 投放 data
+  // (Feishu doesn't auto-recalc formulas when source data is written via API).
+  const { maintainAllDerived } = require('./maintain-derived');
+  await maintainAllDerived(feishuToken);
   console.log('Done.');
 }
 
