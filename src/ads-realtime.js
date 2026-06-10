@@ -309,13 +309,16 @@ function feishuReqOnce(method, path, token, body) {
   });
 }
 
-// Retry on Feishu rate-limit (90217 too many request) / transient errors, with backoff.
 async function feishuReq(method, path, token, body) {
-  for (let attempt = 1; ; attempt++) {
+  // Retry on rate-limit (90217 too many request / 90235 data not ready) + transient
+  // network errors. Exponential backoff + jitter, cap ~15s, up to 10 tries (~1min
+  // total) so a longer rate-limit window doesn't drop a write.
+  const wait = a => new Promise(s => setTimeout(s, Math.min(15000, 500 * 2 ** a) + Math.random() * 500));
+  for (let attempt = 0; ; attempt++) {
     let r;
     try { r = await feishuReqOnce(method, path, token, body); }
-    catch (e) { if (attempt >= 6) throw e; await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
-    if (r && (r.code === 90217 || r.code === 90235) && attempt < 6) { await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
+    catch (e) { if (attempt >= 9) throw e; await wait(attempt); continue; }
+    if (r && (r.code === 90217 || r.code === 90235) && attempt < 9) { await wait(attempt); continue; }
     return r;
   }
 }

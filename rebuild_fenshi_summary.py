@@ -4,7 +4,7 @@
 列布局: A=类别 B=更新时间 C=项目组 D=游戏名称 E=出价方式
         F=消耗 G=ROAS H=活跃度平均成本 I=活跃度 J=人均广告次数
 """
-import json, subprocess, re, sys, os, time
+import json, subprocess, re, sys, os, time, random
 from collections import defaultdict
 
 SPREADSHEET_TOKEN = "K8tgsrOpFhxjy3tgDHscJ5jonHh"
@@ -22,11 +22,11 @@ def lark(args):
     base = ["lark-cli", "--format", "json"]
     if BOT_MODE:
         base += ["--as", "bot"]
-    for attempt in range(1, 7):
+    for attempt in range(10):
         r = subprocess.run(base + args, capture_output=True, text=True, env=ENV)
         d = json.loads(r.stdout or r.stderr or '{}')
-        if d.get('code') in (90217, 90235) and attempt < 6:  # Feishu rate-limit → back off & retry
-            time.sleep(0.5 * attempt)
+        if d.get('code') in (90217, 90235) and attempt < 9:  # rate-limit → exp backoff + jitter (~1min total)
+            time.sleep(min(15, 0.5 * 2 ** attempt) + random.random() * 0.5)
             continue
         return d
 
@@ -115,12 +115,12 @@ def val(col, s=2, e=219):
     """源表某列：IFERROR(VALUE(...), 0)"""
     return f"IFERROR(VALUE('{SRC_NAME}'!{col}{s}:{col}{e}),0)"
 
-print(f"写 {n} 条数据行...")
+print(f"写 {n} 条数据行(一次批量,减少飞书写请求)...")
+data_rows = []
 for i, (game, bid) in enumerate(combos):
     row  = i + 2
     cond = f"('{SRC_NAME}'!B2:B219=D{row})*('{SRC_NAME}'!AT2:AT219=E{row})"
-
-    cells_set(f"A{row}:J{row}", [[
+    data_rows.append([
         {"value": f"单项目-{i+1}"},                          # A: 类别
         {"formula": f"=IFERROR('{SRC_NAME}'!D2,\"\")"},      # B: 更新时间
         {"formula": f"=IFERROR(INDEX('{REF_NAME}'!A2:A100,"  # C: 项目组
@@ -136,8 +136,8 @@ for i, (game, bid) in enumerate(combos):
                     f"'{SRC_NAME}'!B2:B219,D{row},"
                     f"'{SRC_NAME}'!AT2:AT219,E{row})"},
         {"formula": f"=IFERROR(SUMPRODUCT({cond}*{val('G')}*{val('I')})/I{row},0)"},  # J: 人均
-    ]])
-    print(f"  行{row}: 单项目-{i+1}  {game} × {bid}")
+    ])
+cells_set(f"A2:J{n + 1}", data_rows)   # 一次写 n 行,而不是 n 次请求
 
 # ── Step 5: 汇总标签行 ────────────────────────────────────────────────
 print(f"写汇总标签（行{agg_label_row}）...")
@@ -174,8 +174,7 @@ cells_set(f"A{agg_val_row}:J{agg_val_row}", [[
 
 # ── Step 7: 数值列格式（防止遗留百分比格式）─────────────────────────
 print("修正数值列格式...")
-for col in ["F", "G", "H", "I", "J"]:
-    set_style(f"{col}2:{col}{agg_val_row}", number_format="#,##0.####")
+set_style(f"F2:J{agg_val_row}", number_format="#,##0.####")  # F:J 连续,一次设
 
 # ── Step 8: 汇总行背景色（淡黄色）───────────────────────────────────
 print("设置汇总行背景色...")

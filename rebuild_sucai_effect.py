@@ -10,7 +10,7 @@
 下方紧接 汇总-1/汇总-2（合计与加权均值），再接判断表：
 每个游戏按 ROAS 取前3=最优、后3=最劣（消耗门槛过滤）。
 """
-import json, subprocess, re, sys, os, time
+import json, subprocess, re, sys, os, time, random
 from collections import defaultdict
 
 SPREADSHEET_TOKEN = "K8tgsrOpFhxjy3tgDHscJ5jonHh"
@@ -37,11 +37,11 @@ def lark(args):
     base = ["lark-cli", "--format", "json"]
     if BOT_MODE:
         base += ["--as", "bot"]
-    for attempt in range(1, 7):
+    for attempt in range(10):
         r = subprocess.run(base + args, capture_output=True, text=True, env=ENV)
         d = json.loads(r.stdout or r.stderr or '{}')
-        if d.get('code') in (90217, 90235) and attempt < 6:  # Feishu rate-limit → back off & retry
-            time.sleep(0.5 * attempt)
+        if d.get('code') in (90217, 90235) and attempt < 9:  # rate-limit → exp backoff + jitter (~1min total)
+            time.sleep(min(15, 0.5 * 2 ** attempt) + random.random() * 0.5)
             continue
         return d
 
