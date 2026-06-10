@@ -121,6 +121,7 @@ function buildPlan(header, maxSerial, minSerial) {
     '消耗': r => guard(r, `SUMIFS(${AE},${AD},${dtxt(r)})`),
     '广告总收入': r => guard(r, `SUMIFS(${PAB},${PD},${dtxt(r)})`),
     '当日广告收入 ROAS (TikTok)': r => guard(r, `IFERROR(SUMPRODUCT((${AD}=${dtxt(r)})*${AE}*${AF})/$${spendCol}${r},"")`),  // 投放原表 ROAS 按消耗加权
+    '广告收入 ROAS (TikTok)': r => guard(r, `IFERROR(SUMPRODUCT((${AD}=${dtxt(r)})*${AE}*${AF})/$${spendCol}${r},"")`),      // 同上(表头无"当日"前缀的别名)
     // cumulative = this day + the cumulative of the next (older) row. Rows are
     // date-descending, so row r+1 is an earlier day; SUMIFS "<=" on text dates
     // doesn't work in Feishu, so we recurse instead.
