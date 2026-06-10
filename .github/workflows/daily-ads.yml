@@ -39,6 +39,7 @@ jobs:
           TIKTOK_BC_ID:        ${{ secrets.TIKTOK_BC_ID }}
           FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_WEBHOOK:      ${{ secrets.FEISHU_WEBHOOK }}
           TARGET_DATE:         ${{ github.event.inputs.target_date }}
         run: npm run ads-api
 
@@ -51,4 +52,4 @@ jobs:
           BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
           URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
-            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ 投放数据(7点)抓取失败\n时间: $BJT BJT\n查看: $URL\"}}"
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 投放数据·核心抓取/导入失败 ($BJT BJT)\n$URL\"}}"

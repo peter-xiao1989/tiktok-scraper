@@ -343,7 +343,7 @@ async function main() {
   // Rewrite derived tables so Feishu recalcs them against the new 产品 data
   // (Feishu doesn't auto-recalc formulas when source data is written via API).
   const { maintainAllDerived } = require('./maintain-derived');
-  await maintainAllDerived(feishuToken);
+  await maintainAllDerived(feishuToken, '产品数据');
   console.log('Done.');
 }
 

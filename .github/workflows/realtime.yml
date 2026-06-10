@@ -34,6 +34,7 @@ jobs:
       - run: npm ci
 
       - name: Fetch & refresh realtime data
+        id: fetch
         env:
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
           TIKTOK_APP_ID:       ${{ secrets.TIKTOK_APP_ID }}
@@ -53,16 +54,22 @@ jobs:
             --brand feishu
 
       - name: Rebuild 分时同步数据汇总
+        id: fenshi
+        continue-on-error: true   # 一张下游表失败不挡其他表,最后统一汇报
         env:
           LARK_AS_BOT: "1"
         run: python3 rebuild_fenshi_summary.py
 
       - name: Rebuild 分时素材效果表
+        id: sucai
+        continue-on-error: true
         env:
           LARK_AS_BOT: "1"
         run: python3 rebuild_sucai_effect.py
 
       - name: Sync 分时表到多维表
+        id: sync
+        continue-on-error: true
         env:
           LARK_AS_BOT: "1"
         run: python3 sheets_to_base.py fenshi
@@ -77,13 +84,20 @@ jobs:
           pip install -q matplotlib
           python3 render_report.py fenshi
 
-      - name: Notify failure to Feishu
-        if: failure()
+      # 逐表汇报:全绿静默,有未更新才推送。核心抓取失败=🔴,仅下游表失败=🟡(下次自动补)
+      - name: 汇报刷新结果到飞书
+        if: always()
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |
-          [ -z "$FEISHU_WEBHOOK" ] && echo "no FEISHU_WEBHOOK configured, skip" && exit 0
-          BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          [ -z "$FEISHU_WEBHOOK" ] && exit 0
+          ico() { case "$1" in success) echo "✅";; skipped|"") echo "⏭️";; *) echo "❌";; esac; }
+          F='${{ steps.fetch.outcome }}'; A='${{ steps.fenshi.outcome }}'; B='${{ steps.sucai.outcome }}'; C='${{ steps.sync.outcome }}'
+          if [ "$F" = success ] && [ "$A" = success ] && [ "$B" = success ] && [ "$C" = success ]; then exit 0; fi
+          if [ "$F" != success ]; then HEAD="🔴 分时刷新·核心抓取失败"; else HEAD="🟡 分时刷新·部分表未更新(下次自动补)"; fi
+          BJT=$(TZ=Asia/Shanghai date '+%m-%d %H:%M')
           URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TEXT="$HEAD ($BJT)\n$(ico "$F") 分时原表·核心抓取\n$(ico "$A") 分时同步汇总表\n$(ico "$B") 分时素材效果表\n$(ico "$C") 多维表同步\n$URL"
           curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
-            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ 分时数据(每2h)抓取失败\n时间: $BJT BJT\n查看: $URL\"}}"
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$TEXT\"}}"
+          [ "$F" = success ] || exit 1   # 核心失败才让 workflow 标红;仅下游🟡不标红
