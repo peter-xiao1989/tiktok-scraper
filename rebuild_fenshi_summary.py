@@ -25,7 +25,7 @@ def lark(args):
     for attempt in range(1, 7):
         r = subprocess.run(base + args, capture_output=True, text=True, env=ENV)
         d = json.loads(r.stdout or r.stderr or '{}')
-        if d.get('code') == 90217 and attempt < 6:  # Feishu rate-limit → back off & retry
+        if d.get('code') in (90217, 90235) and attempt < 6:  # Feishu rate-limit → back off & retry
             time.sleep(0.5 * attempt)
             continue
         return d

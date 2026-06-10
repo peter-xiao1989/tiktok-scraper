@@ -44,7 +44,7 @@ async function feishuReq(method, path, token, body) {
     let r;
     try { r = await feishuReqOnce(method, path, token, body); }
     catch (e) { if (attempt >= 6) throw e; await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
-    if (r && r.code === 90217 && attempt < 6) { await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
+    if (r && (r.code === 90217 || r.code === 90235) && attempt < 6) { await new Promise(s => setTimeout(s, 500 * attempt)); continue; }
     return r;
   }
 }
