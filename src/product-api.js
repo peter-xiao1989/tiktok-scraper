@@ -224,6 +224,48 @@ async function clearSheetData(token) {
   console.log('  Headers written to row 1.');
 }
 
+// Delete existing rows whose 统计周期 (D) falls in dateSet, so the day can be
+// re-fetched and overwritten. Product data only settles at 16:00, so an early
+// scrape may be empty/partial — the scheduled run must replace it, not skip it.
+async function deleteRowsByDates(token, dateSet) {
+  const targetRows = [];
+  let startRow = 2;
+  while (true) {
+    const rows = await readSheetRange(PRODUCT_SHEET_ID, `D${startRow}:D${startRow + 499}`, token);
+    if (!rows.length) break;
+    let hasData = false;
+    rows.forEach((row, i) => {
+      const date = row[0];
+      if (date != null && date !== '') {
+        hasData = true;
+        if (dateSet.has(toISO(date))) targetRows.push(startRow + i);
+      }
+    });
+    if (!hasData || rows.length < 500) break;
+    startRow += 500;
+  }
+  if (!targetRows.length) { console.log('  No existing rows for target dates — nothing to overwrite.'); return; }
+  // merge consecutive row numbers into runs, delete bottom-up (so indices don't shift)
+  targetRows.sort((a, b) => a - b);
+  const runs = [];
+  let lo = targetRows[0], hi = targetRows[0];
+  for (let i = 1; i < targetRows.length; i++) {
+    if (targetRows[i] === hi + 1) hi = targetRows[i];
+    else { runs.push([lo, hi]); lo = hi = targetRows[i]; }
+  }
+  runs.push([lo, hi]);
+  runs.sort((a, b) => b[0] - a[0]);
+  let deleted = 0;
+  for (const [a, b] of runs) {
+    const cr = await feishuReq('DELETE',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+      { dimension: { sheetId: PRODUCT_SHEET_ID, majorDimension: 'ROWS', startIndex: a - 1, endIndex: b } });
+    if (cr.code !== 0) throw new Error('delete rows failed: ' + JSON.stringify(cr));
+    deleted += (b - a + 1);
+  }
+  console.log(`  Overwrite: deleted ${deleted} existing rows for ${[...dateSet].join(',')}`);
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -247,6 +289,11 @@ async function main() {
   if (process.env.CLEAR_BEFORE === 'true') {
     console.log('Clearing product sheet data...');
     await clearSheetData(feishuToken);
+  } else {
+    // Overwrite the target dates: delete their existing rows so the scheduled
+    // 16:00 run replaces any early/partial scrape instead of dedup-skipping it.
+    console.log('Overwriting target dates (delete existing rows in range)...');
+    await deleteRowsByDates(feishuToken, new Set(dates));
   }
 
   console.log('Loading existing keys for dedup...');
