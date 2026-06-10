@@ -2,10 +2,11 @@ name: Realtime Ad Data (Hourly)
 
 on:
   schedule:
-    # Hourly refresh. GitHub delays/drops scheduled runs under load, worst at
-    # :00 (global peak), so fire at :10. The script is a full refresh
-    # (idempotent); a missed fire is healed by the next hour's run.
-    - cron: '10 * * * *'
+    # Backup only. The Cloudflare worker triggers realtime hourly on the hour
+    # (punctual); this is a low-frequency fallback (every 3h at :10) for when
+    # the worker is down. Full refresh is idempotent, so an overlapping/missed
+    # fire is harmless — this just caps the gap at ~3h without the worker.
+    - cron: '10 */3 * * *'
   workflow_dispatch:
     inputs:
       target_date:
