@@ -1,17 +1,22 @@
+/**
+ * Load the game roster from the 产品id及链接 sheet (juQobR) in the main
+ * spreadsheet — the user-maintained source of truth for 项目组/产品名/id.
+ * (Replaces the old bitable config table, which was deleted.)
+ * Rows without an id are skipped for scraping (their games can still appear
+ * in 投放-side tables); fill in the id to bring a game into the product pipeline.
+ */
 const https = require('https');
 
-// Game list lives in the 产品id及链接 sheet (项目组 | 产品名 | id), which the user
-// maintains and which includes the 齿轮/战车 games — unlike the old Bitable.
 const SPREADSHEET_TOKEN = 'J8mswO2vziyIAAkdt4rcVeaDnog';
-const GAMES_SHEET_ID    = 'juQobR';
+const GAMES_SHEET_ID = 'juQobR';   // 产品id及链接: A=项目组 B=产品名 C=id
 
 function httpGet(path, token) {
   return new Promise((resolve, reject) => {
     const req = https.request({ hostname: 'open.feishu.cn', path, method: 'GET',
       headers: { 'Authorization': 'Bearer ' + token }
     }, res => {
-      const chunks = []; res.on('data', c => chunks.push(c));
-      res.on('end', () => { const buf = Buffer.concat(chunks).toString('utf8'); try { resolve(JSON.parse(buf)); } catch { resolve(buf); } });
+      let buf = ''; res.on('data', c => buf += c);
+      res.on('end', () => { try { resolve(JSON.parse(buf)); } catch { resolve(buf); } });
     });
     req.on('error', reject); req.end();
   });
@@ -42,13 +47,15 @@ async function loadGames(appId, appSecret) {
     token
   );
   const rows = res.data?.valueRange?.values || [];
-  return rows
+  const games = rows
     .map(r => ({
-      group: (r[0] == null ? '' : String(r[0])).trim(),
-      name:  (r[1] == null ? '' : String(r[1])).trim(),
-      id:    (r[2] == null ? '' : String(r[2])).trim(),
+      group: String(r[0] ?? '').trim(),
+      name:  String(r[1] ?? '').trim(),
+      id:    String(r[2] ?? '').trim(),
     }))
     .filter(g => g.id && g.name);
+  if (!games.length) throw new Error('产品id及链接 returned no games with id — refusing to scrape an empty roster');
+  return games;
 }
 
 module.exports = { loadGames };

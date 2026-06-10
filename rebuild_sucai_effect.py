@@ -68,8 +68,13 @@ def csv_get(sheet, rng):
 
 
 def fnum(s):
+    s = str(s).strip().replace(",", "")
+    if not s:
+        return 0.0
+    pct = s.endswith("%")
     try:
-        return float(s) if s.strip() else 0.0
+        v = float(s.rstrip("%"))
+        return v / 100 if pct else v
     except (ValueError, AttributeError):
         return 0.0
 

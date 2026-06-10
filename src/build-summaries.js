@@ -111,7 +111,7 @@ function buildPlan(header, maxSerial, minSerial) {
   if (!dCol) throw new Error('日经营数据汇总缺少表头: 统计周期');
   const spendCol = L['消耗'], revCol = L['广告总收入'], cumSpendCol = L['累计消耗'], cumRevCol = L['累计收入'];
   const PD = `${PROD}!$D$2:$D$5000`, PAB = `${PROD}!$AB$2:$AB$5000`, PE = `${PROD}!$E$2:$E$5000`;
-  const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`;
+  const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`, AF = `${ADS}!$F$2:$F$5000`;
   const dtxt = r => `TEXT($${dCol}${r},"yyyy-MM-dd")`;   // this row's date as text (产品/投放 D are text)
   const guard = (r, body) => `=IF($${dCol}${r}="","",${body})`;
 
@@ -120,7 +120,8 @@ function buildPlan(header, maxSerial, minSerial) {
     '统计周期': r => `=IF((${maxSerial}-ROW()+2)<${minSerial},"",${maxSerial}-ROW()+2)`,
     '消耗': r => guard(r, `SUMIFS(${AE},${AD},${dtxt(r)})`),
     '广告总收入': r => guard(r, `SUMIFS(${PAB},${PD},${dtxt(r)})`),
-    '当日广告收入 ROAS (TikTok)': r => guard(r, `IFERROR($${revCol}${r}/$${spendCol}${r},"")`),
+    '当日广告收入 ROAS (TikTok)': r => guard(r, `IFERROR(SUMPRODUCT((${AD}=${dtxt(r)})*${AE}*${AF})/$${spendCol}${r},"")`),  // 投放原表 ROAS 按消耗加权
+    '广告收入 ROAS (TikTok)': r => guard(r, `IFERROR(SUMPRODUCT((${AD}=${dtxt(r)})*${AE}*${AF})/$${spendCol}${r},"")`),      // 同上(表头无"当日"前缀的别名)
     // cumulative = this day + the cumulative of the next (older) row. Rows are
     // date-descending, so row r+1 is an earlier day; SUMIFS "<=" on text dates
     // doesn't work in Feishu, so we recurse instead.
@@ -132,6 +133,21 @@ function buildPlan(header, maxSerial, minSerial) {
   const plan = {};
   header.forEach((name, j) => { if (FIELD[name]) plan[colLetter(j + 1)] = FIELD[name]; });
   return { plan, dateCol: dCol, roasCols: [L['当日广告收入 ROAS (TikTok)'], L['TT累计ROI']].filter(Boolean) };
+}
+
+// Grow the sheet if the plan needs more rows/columns than it has.
+async function ensureGrid(token, sheetId, minRows, minCols) {
+  const meta = await feishuReq('GET',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/metainfo`, token);
+  const sh = (meta.data?.sheets || []).find(x => x.sheetId === sheetId);
+  if (!sh) return;
+  const addRows = minRows - sh.rowCount, addCols = minCols - sh.columnCount;
+  for (const [dim, count] of [['ROWS', addRows], ['COLUMNS', addCols]]) {
+    if (count > 0) {
+      await feishuReq('POST', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
+        { dimension: { sheetId, majorDimension: dim, length: count } });
+    }
+  }
 }
 
 async function writeFormulas(token, sheetId, targetRow, plan) {
@@ -222,27 +238,23 @@ async function ensureDailySummary(token) {
 
 const PROJECT_SHEET_ID = 'JIKPZV';
 
-// Read 产品数据原表 B(项目组) C(游戏) → ordered groups + group→games map.
+// Read 产品id及链接 A(项目组) B(产品名) → ordered groups + group→games map.
+// (User-maintained roster; covers 投放-only groups like 齿轮/战车 that never
+// appear in 产品数据原表.)
 async function getGroupMapping(token) {
   const groups = [];
   const groupGames = {};
-  let startRow = 2;
-  while (true) {
+  {
     const r = await feishuReq('GET',
-      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/c50205!B${startRow}:C${startRow + 499}`, token);
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/juQobR!A2:B200`, token);
     const rows = r.data?.valueRange?.values || [];
-    if (!rows.length) break;
-    let has = false;
     for (const row of rows) {
       const grp = row[0], game = row[1];
       if (grp && game) {
-        has = true;
         if (!groupGames[grp]) { groupGames[grp] = []; groups.push(grp); }
         if (!groupGames[grp].includes(game)) groupGames[grp].push(game);
       }
     }
-    if (!has || rows.length < 500) break;
-    startRow += 500;
   }
   // game → group from product table (product groups only)
   const gameToGroup = {};
@@ -260,7 +272,7 @@ async function ensureProjectSummary(token) {
     throw new Error(`项目维度经营表缺少表头: ${names.join(' / ')}`);
   };
   const aCol = need('项目组'), bCol = need('统计周期'), cCol = need('消耗'), dCol = need('广告总收入'),
-        eCol = need('当日广告收入 ROAS (TikTok)'), fCol = need('项目累计消耗', '累计消耗'),
+        eCol = need('当日广告收入 ROAS (TikTok)', '广告收入 ROAS (TikTok)'), fCol = need('项目累计消耗', '累计消耗'),
         gCol = need('项目累计收入', '累计收入'), hCol = need('项目累计ROI', 'TT累计ROI'), iCol = need('新增用户');
 
   const { dayCount, maxSerial, minSerial } = await getProductDateInfo(token);
@@ -269,18 +281,21 @@ async function ensureProjectSummary(token) {
   if (N === 0) throw new Error('无项目组');
   const targetRow = dayCount * N + 1 + ROW_BUFFER;
   console.log(`  项目维度经营表: ${dayCount} 天 × ${N} 组, 填充 2..${targetRow}`);
+  await ensureGrid(token, PROJECT_SHEET_ID, targetRow + 5, 18 + 4 * N + 1);
 
   // helper columns: today spend (N), cumulative spend (N), sort key (N), pos (1)
   const TODAY0 = 18;                       // R
   const CUM0 = TODAY0 + N;
   const KEY0 = CUM0 + N;
   const POScol = colLetter(KEY0 + N);
+  const RX0 = KEY0 + N + 1;                 // weighted-ROAS numerator per group, after POS
+  const rxCols = Array.from({ length: N }, (_, k) => colLetter(RX0 + k));
   const todayCols = Array.from({ length: N }, (_, k) => colLetter(TODAY0 + k));
   const cumCols = Array.from({ length: N }, (_, k) => colLetter(CUM0 + k));
   const keyCols = Array.from({ length: N }, (_, k) => colLetter(KEY0 + k));
 
   const PD = `${PROD}!$D$2:$D$5000`, PAB = `${PROD}!$AB$2:$AB$5000`, PE = `${PROD}!$E$2:$E$5000`, PB = `${PROD}!$B$2:$B$5000`;
-  const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`, AB = `${ADS}!$B$2:$B$5000`;
+  const AE = `${ADS}!$E$2:$E$5000`, AD = `${ADS}!$D$2:$D$5000`, AB = `${ADS}!$B$2:$B$5000`, AF = `${ADS}!$F$2:$F$5000`;
   const gamesArr = groups.map(g => `{${groupGames[g].map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`);
   const groupsArr = `{${groups.map(g => `"${g}"`).join(',')}}`;
 
@@ -311,13 +326,18 @@ async function ensureProjectSummary(token) {
   });
   // helper: position of the rank-th highest key within this row's N groups
   plan[POScol] = r => `=IF(${invalid(r)},"",MATCH(LARGE(${keyRange(r)},${rank(r)}),${keyRange(r)},0))`;
+  // helper: weighted ROAS numerator per fixed group k (Σ 消耗×ROAS from 投放原表)
+  rxCols.forEach((col, k) => {
+    plan[col] = r => `=IF(${invalid(r)},"",SUMPRODUCT(ISNUMBER(MATCH(${AB},${gamesArr[k]},0))*(${AD}=${dtxt(r)})*${AE}*${AF}))`;
+  });
+  const rxRange = r => `$${rxCols[0]}${r}:$${rxCols[N - 1]}${r}`;
 
   // visible columns by header name (use POS to pick the group/spend/cum)
   plan[bCol] = r => `=IF(${invalid(r)},"",${dser(r)})`;                                   // 统计周期
   plan[aCol] = r => `=IF(${pos(r)}="","",INDEX(${groupsArr},${pos(r)}))`;                 // 项目组
   plan[cCol] = r => `=IF(${pos(r)}="","",INDEX(${todayRange(r)},${pos(r)}))`;             // 消耗 (real value)
   plan[dCol] = r => ifGrp(r, `SUMIFS(${PAB},${PB},$${aCol}${r},${PD},${dtxt(r)})`);       // 广告总收入
-  plan[eCol] = r => ifGrp(r, `IFERROR($${dCol}${r}/$${cCol}${r},"")`);                    // 当日 ROAS
+  plan[eCol] = r => ifGrp(r, `IFERROR(INDEX(${rxRange(r)},${pos(r)})/$${cCol}${r},"")`);   // 当日 ROAS = 投放原表 ROAS 按消耗加权
   plan[fCol] = r => ifGrp(r, `INDEX(${cumRange(r)},${pos(r)})`);                          // 累计消耗
   plan[gCol] = r => ifGrp(r, `SUMPRODUCT((${PB}=$${aCol}${r})*(DATEVALUE(${PD})<=${dser(r)})*${PAB})`); // 累计收入
   plan[hCol] = r => ifGrp(r, `IFERROR($${gCol}${r}/$${fCol}${r},"")`);                    // 累计 ROI
@@ -328,7 +348,7 @@ async function ensureProjectSummary(token) {
   await applyColumnFormats(token, PROJECT_SHEET_ID, header, targetRow);
   // hide helper columns (today/cum/key spend + pos)
   await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: KEY0 + N },
+    { dimension: { sheetId: PROJECT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: TODAY0 - 1, endIndex: RX0 + N - 1 },
       dimensionProperties: { visible: false } }).catch(() => {});
   return targetRow;
 }
