@@ -1,4 +1,4 @@
-name: Realtime Ad Data (Hourly)
+name: Realtime Ad Data (hourly via worker)
 
 on:
   schedule:
