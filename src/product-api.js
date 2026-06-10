@@ -20,7 +20,7 @@ const { ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensure
 const SPREADSHEET_TOKEN = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const PRODUCT_SHEET_ID  = 'c50205';
 const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })();
 
 // 41-col header (A–AO) of TT产品数据原表
 const PRODUCT_HEADERS = [

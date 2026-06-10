@@ -3,7 +3,7 @@ const https = require('https');
 const APP_TOKEN = 'HCXKb9qoDaiEmqsl4cocOnNPnpb';
 const SOURCE_TABLE = 'tblIT7JYJAv5pKYm';
 const APP_ID = process.env.FEISHU_APP_ID || 'cli_aa898a664d395cc2';
-const APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+const APP_SECRET = process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })();
 
 function feishuReq(method, path, token, body) {
   return new Promise((resolve, reject) => {

@@ -5,7 +5,7 @@ const games = require('../games.json');
 
 const FEISHU_CONFIG = {
   appId:            process.env.FEISHU_APP_ID            || 'cli_aa898a664d395cc2',
-  appSecret:        process.env.FEISHU_APP_SECRET         || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX',
+  appSecret:        process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })(),
   spreadsheetToken: process.env.FEISHU_SPREADSHEET_TOKEN  || 'QGOws5DHvhz8hqtzfMQc51oenId',
   sheetId:          process.env.FEISHU_SHEET_ID           || '0ac8d8',
 };

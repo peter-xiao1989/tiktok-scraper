@@ -5,7 +5,7 @@ const { loadGames } = require('./games-loader');
 
 const FEISHU_CONFIG = {
   appId:    process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2',
-  appSecret: process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX',
+  appSecret: process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })(),
 };
 
 function getYesterday() {

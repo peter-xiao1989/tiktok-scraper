@@ -17,7 +17,7 @@ const https = require('https');
 const SPREADSHEET_TOKEN  = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const REALTIME_SHEET_ID  = 'jArZTX'; // TT每日分时投放数据原表
 const FEISHU_APP_ID      = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
-const FEISHU_APP_SECRET  = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+const FEISHU_APP_SECRET  = process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })();
 const TIKTOK_HOST        = 'business-api.tiktok.com';
 
 // Column headers (row 1). Matches TT投放数据原表 A-AT + 更新时间 at end.

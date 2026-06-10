@@ -5,7 +5,7 @@ const path = require('path');
 const APP_TOKEN = 'HCXKb9qoDaiEmqsl4cocOnNPnpb';
 const TABLE_ID  = 'tblIt96EqRXJQUR9'; // TT投放数据原表
 const APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
-const APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+const APP_SECRET = process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })();
 
 function feishuReq(method, urlPath, token, body) {
   return new Promise((resolve, reject) => {
