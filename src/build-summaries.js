@@ -690,5 +690,5 @@ if (require.main === module) {
 module.exports = {
   ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary,
   ensureAdBidSummary,
-  getFeishuToken, getGroupMapping, getProductDateInfo, EXTRA_GROUP_MAP, applyColumnFormats, wrapDecimals,
+  getFeishuToken, getGroupMapping, getProductDateInfo, EXTRA_GROUP_MAP, applyColumnFormats, wrapDecimals, ensureGrid,
 };
