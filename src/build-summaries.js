@@ -179,9 +179,13 @@ const FMT_INT_NAMES = new Set([
 ]);
 const FMT_DATE_NAMES = new Set(['统计周期', '按天', '更新时间']);
 const FMT_PCT_NAMES = new Set(['次留', '7日留存', '14日留存', '30日留存']);
+// Text columns must NOT be wrapped in ROUND (doubles the formula → can exceed
+// the 1000-char limit) and must NOT get a number format.
+const FMT_TEXT_NAMES = new Set(['项目组', '游戏名称', '创意素材名称', '出价方式', '账户名称', '系列名称']);
 function classify(name) {
   const n = (name || '').trim();
   if (FMT_DATE_NAMES.has(n)) return 'date';
+  if (FMT_TEXT_NAMES.has(n)) return 'text';
   if (/ROAS|ROI|率/.test(n) || FMT_PCT_NAMES.has(n)) return 'pct';
   if (FMT_INT_NAMES.has(n)) return 'int';
   return 'dec';
@@ -208,6 +212,7 @@ async function applyColumnFormats(token, sheetId, header, targetRow) {
     if (!name) continue;
     const col = colLetter(j + 1);
     const type = classify(name);
+    if (type === 'text') continue;  // leave text columns untouched
     const style = type === 'date' ? { formatter: 'yyyy/MM/dd' }
       : type === 'pct' ? { formatter: '0.00%' }
       : type === 'int' ? { formatter: '#,##0' }
