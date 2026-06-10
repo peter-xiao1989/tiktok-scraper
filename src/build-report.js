@@ -20,7 +20,7 @@ const PROD = "'TT产品数据原表'";
 const ADS  = "'TT投放数据原表'";
 const ROW_BUFFER = 200;
 const FEISHU_APP_ID     = process.env.FEISHU_APP_ID     || 'cli_aa898a664d395cc2';
-const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || 'fOlixcmQNWlOBkrEAHagGdZUI5Fum3KX';
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || (() => { throw new Error('FEISHU_APP_SECRET env is required'); })();
 
 function feishuReq(method, path, token, body) {
   return new Promise((resolve, reject) => {
