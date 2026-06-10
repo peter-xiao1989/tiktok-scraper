@@ -73,9 +73,9 @@ const FIELD_SRC = {
   '广告总收入': { kind: 'prod', col: 'AB' },
 };
 
-async function readHeader(token) {
+async function readHeader(token, sheetId = REPORT_SHEET_ID) {
   const r = await feishuReq('GET',
-    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${REPORT_SHEET_ID}!A1:AZ1`, token);
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetId}!A1:AZ1`, token);
   return (r.data?.valueRange?.values?.[0] || []).map(v => (v == null ? '' : String(v).trim()));
 }
 
@@ -84,7 +84,7 @@ async function readHeader(token) {
 // ordered by their 项目组's day spend (from 项目维度经营表) then the game's own
 // 投放 spend. Helper cols (hidden): per-game sort keys, POS, PRODROW, SHOW.
 const PROJ = "'项目维度经营表'";
-function buildPlan(header, gameList, groupList, maxSerial, minSerial) {
+function buildPlan(header, gameList, groupList, maxSerial, minSerial, projCols) {
   const nameToLetter = {};
   header.forEach((name, j) => { if (name && !nameToLetter[name]) nameToLetter[name] = colLetter(j + 1); });
   const gCol = nameToLetter['游戏名称'], dCol = nameToLetter['统计周期'], eCol = nameToLetter['消耗'],
@@ -95,7 +95,7 @@ function buildPlan(header, gameList, groupList, maxSerial, minSerial) {
   const G = gameList.length;
   const HELP0 = 20;                                   // helper cols start at T(20)
   const keyCols = Array.from({ length: G }, (_, k) => colLetter(HELP0 + k));
-  const POSc = colLetter(HELP0 + G), PRODROWc = colLetter(HELP0 + G + 1), SHOWc = colLetter(HELP0 + G + 2);
+  const POSc = colLetter(HELP0 + G), SHOWc = colLetter(HELP0 + G + 1);
   const gameArr = `{${gameList.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
   const groupArr = `{${groupList.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
 
@@ -106,8 +106,13 @@ function buildPlan(header, gameList, groupList, maxSerial, minSerial) {
   const keyRange = r => `$${keyCols[0]}${r}:$${keyCols[G - 1]}${r}`;
   const pos = r => `$${POSc}${r}`;
   const sumifs = (col, r) => `SUMIFS(${ADS}!$${col}$2:$${col}$5000,${ADS}!$B$2:$B$5000,$${gCol}${r},${ADS}!$D$2:$D$5000,TEXT($${dCol}${r},"yyyy-MM-dd"))`;
-  // product-side value: INDEX the matched product row (blank if none yet, e.g. before 16:00)
-  const prodAt = col => r => `=IF($${gCol}${r}="","",IF($${PRODROWc}${r}=0,"",IFERROR(INDEX(${PROD}!$${col}$2:$${col}$5000,$${PRODROWc}${r}),"")))`;
+  // product-side value for (game,date). Numeric cols → SUMIFS (unique row, so the
+  // sum is the value; blank/0 before 产品 data lands). Text-% cols (启动成功率,
+  // 广告点击率) can't be summed → INDEX the matched row via MATCH(1,(game)*(date)).
+  const prodSum = col => r => `=IF($${gCol}${r}="","",SUMIFS(${PROD}!$${col}$2:$${col}$5000,${PROD}!$C$2:$C$5000,$${gCol}${r},${PROD}!$D$2:$D$5000,TEXT($${dCol}${r},"yyyy-MM-dd")))`;
+  const prodIdx = col => r => `=IF($${gCol}${r}="","",IFERROR(LOOKUP(2,1/((${PROD}!$C$2:$C$5000=$${gCol}${r})*(${PROD}!$D$2:$D$5000=TEXT($${dCol}${r},"yyyy-MM-dd"))),${PROD}!$${col}$2:$${col}$5000),""))`;
+  const TEXT_PROD_COLS = new Set(['P', 'Y']);   // 启动成功率, 广告点击率 (text "%")
+  const prodAt = col => (TEXT_PROD_COLS.has(col) ? prodIdx(col) : prodSum(col));
   const gen = {
     seq: r => `=IF($${gCol}${r}="","",ROW()-1)`,
     date: r => `=IF(${invalid(r)},"",${dser(r)})`,
@@ -125,22 +130,21 @@ function buildPlan(header, gameList, groupList, maxSerial, minSerial) {
     plan[colLetter(j + 1)] = spec.kind === 'prod' ? prodAt(spec.col) : gen[spec.kind];
   });
   // helper: per-fixed-game sort key = group-spend*1e6 + game-spend*1e3 + (G-k)
-  // tiebreak. Integer (no collisions) → games cluster by 项目组 day spend, then by
-  // own spend, then fixed game order (so equal-0 games in a group don't collapse).
+  // tiebreak. Group spend read from 项目维度经营表 by header-resolved columns
+  // (the sheet may have a leading 序号 col, so don't hardcode A/B/C).
+  const PG = projCols.grp, PD = projCols.date, PC = projCols.spend;
   keyCols.forEach((col, k) => {
-    plan[col] = r => `=IF(${invalid(r)},"",N(SUMIFS(${PROJ}!$C$2:$C$5000,${PROJ}!$A$2:$A$5000,"${groupList[k]}",${PROJ}!$B$2:$B$5000,${dser(r)}))*1000000+N(SUMIFS(${ADS}!$E$2:$E$5000,${ADS}!$B$2:$B$5000,"${gameList[k].replace(/"/g, '""')}",${ADS}!$D$2:$D$5000,${dtxt(r)}))*1000+${G - k})`;
+    plan[col] = r => `=IF(${invalid(r)},"",N(SUMIFS(${PROJ}!$${PC}$2:$${PC}$5000,${PROJ}!$${PG}$2:$${PG}$5000,"${groupList[k]}",${PROJ}!$${PD}$2:$${PD}$5000,${dser(r)}))*1000000+N(SUMIFS(${ADS}!$E$2:$E$5000,${ADS}!$B$2:$B$5000,"${gameList[k].replace(/"/g, '""')}",${ADS}!$D$2:$D$5000,${dtxt(r)}))*1000+${G - k})`;
   });
   // helper POS: index of the rank-th highest key among this date's G games
   plan[POSc] = r => `=IF(${invalid(r)},"",MATCH(LARGE(${keyRange(r)},${rank(r)}),${keyRange(r)},0))`;
-  // helper PRODROW: relative product-table row for (game,date), 0 if none
-  plan[PRODROWc] = r => `=IF($${gCol}${r}="","",IFERROR(MATCH(1,(${PROD}!$C$2:$C$5000=$${gCol}${r})*(${PROD}!$D$2:$D$5000=TEXT($${dCol}${r},"yyyy-MM-dd")),0),0))`;
   // helper SHOW: 0 when 消耗 and 广告总收入 are both 0 → filtered out
   plan[SHOWc] = r => `=IF($${gCol}${r}="","",IF(AND(N($${eCol}${r})=0,N($${sCol}${r})=0),0,1))`;
 
   const intCols = ['新增用户', '活跃用户', '总用户数', '总启动次数'].map(n => nameToLetter[n]).filter(Boolean);
-  // helper cols span 1-based [HELP0, HELP0+G+2]; dimension API is 0-based exclusive.
+  // helper cols span 1-based [HELP0, HELP0+G+1]; dimension API is 0-based exclusive.
   return { plan, dateCol: dCol, roasCol: nameToLetter['广告收入 ROAS (TikTok)'], intCols,
-           helpStart: HELP0 - 1, helpEnd: HELP0 + G + 2, showCol: SHOWc, G };
+           helpStart: HELP0 - 1, helpEnd: HELP0 + G + 1, showCol: SHOWc, G };
 }
 
 async function getProductDataCount(token) {
@@ -233,8 +237,12 @@ async function ensureReportFormulas(token) {
   const gameList = [], groupList = [];
   for (const grp of groups) for (const g of groupGames[grp]) { gameList.push(g); groupList.push(grp); }
   const { maxSerial, minSerial } = await getProductDateInfo(token);
+  // resolve 项目维度经营表 columns by header name (sheet may have a 序号 col)
+  const ph = {};
+  (await readHeader(token, 'JIKPZV')).forEach((n, j) => { if (n && !ph[n]) ph[n] = colLetter(j + 1); });
+  const projCols = { grp: ph['项目组'] || 'A', date: ph['统计周期'] || 'B', spend: ph['消耗'] || 'C' };
   const { plan, dateCol, roasCol, intCols, helpStart, helpEnd, showCol, G } =
-    buildPlan(header, gameList, groupList, maxSerial, minSerial);
+    buildPlan(header, gameList, groupList, maxSerial, minSerial, projCols);
   const spanDays = Math.max(1, maxSerial - minSerial + 1);
   const targetRow = spanDays * G + 1 + ROW_BUFFER;
   console.log(`  日报表网格: ${gameList.length} 游戏 × ${spanDays} 天, 填充 2..${targetRow}`);
