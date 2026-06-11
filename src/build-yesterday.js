@@ -187,7 +187,31 @@ async function main() {
     .map(x => ({ fields: { '项目组': x[0], '日期': msOf(serAny(x[1])), '消耗': f1(pnum(x[2])) } }));
   await writeRecs(token, r30T, r30);
 
-  console.log(`✅ 昨日速览: 总览${ovRecs.length}行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
+  // ── 近30天-出价方式(长格式:日×出价,供占比圆盘) + 近30天-出价日对比(宽格式:供4系列组合图) ──
+  const bidSince = Y.s - 29;
+  const bidLongT = await ensureTable(token, '近30天-出价方式', [
+    { field_name: '日期', type: 5 }, { field_name: '出价方式', type: 1 },
+    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
+  ], tables);
+  const bidWideT = await ensureTable(token, '近30天-出价日对比', [
+    { field_name: '日期', type: 5 },
+    { field_name: '手动出价消耗', type: 2 }, { field_name: '自动出价消耗', type: 2 },
+    { field_name: '手动出价ROI', type: 2 }, { field_name: '自动出价ROI', type: 2 },
+  ], tables);
+  const longRecs = [], wideRecs = [];
+  for (let s30 = bidSince; s30 <= Y.s; s30++) {
+    const b = bidOf(s30, '@ALL');
+    if (b['手动出价消耗'] == null && b['自动出价消耗'] == null) continue;
+    for (const lb of ['手动', '自动']) {
+      if (b[lb + '出价消耗'] == null) continue;
+      longRecs.push({ fields: { '日期': msOf(s30), '出价方式': lb + '出价', '消耗': b[lb + '出价消耗'], '广告首日ROI': b[lb + '出价ROI'] } });
+    }
+    wideRecs.push({ fields: { '日期': msOf(s30), ...b } });
+  }
+  await writeRecs(token, bidLongT, longRecs);
+  await writeRecs(token, bidWideT, wideRecs);
+
+  console.log(`✅ 昨日速览: 总览${ovRecs.length}行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 / 出价${longRecs.length}+${wideRecs.length}行 (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
 module.exports = { main };
