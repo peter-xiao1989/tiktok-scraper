@@ -68,18 +68,23 @@ async function main() {
     .sort((a, b) => b.s - a.s);
   if (!ws.length) { console.log('无数据'); return; }
   const Y = ws[0], P = ws[1] || null;  // 昨日(最新有数据日) / 前日
+  const W = ws.find(x => x.s === Y.s - 7) || null;  // 上周同天(同 weekday,公平对比)
   const pending = Y.rev <= 0 && Y.sp > 0;
 
   // ── 总览(1行) ──
   const ovT = await ensureTable(token, '昨日速览-总览', [
     { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 },
     { field_name: '广告首日ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '累计ROI', type: 2 },
-    { field_name: '消耗环比', type: 2 }, { field_name: '收入环比', type: 2 }, { field_name: '收入状态', type: 1 },
+    { field_name: '消耗环比', type: 2 }, { field_name: '收入环比', type: 2 },
+    { field_name: '消耗环比上周同天', type: 2 }, { field_name: '收入环比上周同天', type: 2 },
+    { field_name: '收入状态', type: 1 },
   ], tables);
   await writeRecs(token, ovT, [{ fields: {
     '日期': msOf(Y.s), '消耗': f1(Y.sp), '收入': f1(Y.rev), '广告首日ROI': f2(Y.roas),
     '新增用户': Math.round(Y.nu), '累计ROI': f2(Y.cumROI),
     '消耗环比': P ? chg(Y.sp, P.sp) : null, '收入环比': P && !pending ? chg(Y.rev, P.rev) : null,
+    '消耗环比上周同天': W ? chg(Y.sp, W.sp) : null,
+    '收入环比上周同天': W && !pending ? chg(Y.rev, W.rev) : null,
     '收入状态': pending ? '待结算(16点后更新)' : '已结算',
   } }]);
 
@@ -110,7 +115,29 @@ async function main() {
     .map(([g, v]) => ({ fields: { '游戏名称': g, '项目组': v.grp, '消耗': f1(v.sp), '广告新增': Math.round(v.adNew), '广告新增成本': f1(v.cost), '广告首日ROI': f2(v.roas), '收入': f1(v.rev), '消耗环比': kp[g] ? chg(v.sp, kp[g].sp) : null } }));
   await writeRecs(token, pkT, pkRecs);
 
-  console.log(`✅ 昨日速览: 总览1行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
+  // ── 近30天-项目日消耗(驾驶舱多线趋势/占比用,窗口=最新日往前30天) ──
+  const since = Y.s - 29;
+  const r30T = await ensureTable(token, '近30天-项目日消耗', [
+    { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 },
+  ], tables);
+  const r30 = jk.filter(x => { const s = serAny(x[1]); return s >= since && s <= Y.s && pnum(x[2]) > 0; })
+    .map(x => ({ fields: { '项目组': x[0], '日期': msOf(serAny(x[1])), '消耗': f1(pnum(x[2])) } }));
+  await writeRecs(token, r30T, r30);
+
+  // ── 近30天-素材消耗Top(Top50) ── TOBfe9: B按天1 C项目组2 D素材3 E消耗4
+  const mat = await readSheet(token, 'TOBfe9!A2:E3000');
+  const agg = {};
+  mat.forEach(x => {
+    const s = serAny(x[1]); if (!x[3] || !s || s < since || s > Y.s) return;
+    const k = x[3]; (agg[k] = agg[k] || { grp: x[2], sp: 0 }).sp += pnum(x[4]);
+  });
+  const top = Object.entries(agg).sort((a, b) => b[1].sp - a[1].sp).slice(0, 50);
+  const matT = await ensureTable(token, '近30天-素材消耗Top', [
+    { field_name: '创意素材名称', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 },
+  ], tables);
+  await writeRecs(token, matT, top.map(([m, v]) => ({ fields: { '创意素材名称': m, '项目组': v.grp || '', '消耗': f1(v.sp) } })));
+
+  console.log(`✅ 昨日速览: 总览1行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 / 素材Top${top.length} (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
 module.exports = { main };
