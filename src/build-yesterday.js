@@ -124,18 +124,21 @@ async function main() {
     .map(x => ({ fields: { '项目组': x[0], '日期': msOf(serAny(x[1])), '消耗': f1(pnum(x[2])) } }));
   await writeRecs(token, r30T, r30);
 
-  // ── 近30天-素材消耗Top(Top50) ── TOBfe9: B按天1 C项目组2 D素材3 E消耗4
-  const mat = await readSheet(token, 'TOBfe9!A2:E3000');
+  // ── 近30天-素材消耗Top(Top50,含加权ROI) ── TOBfe9: B按天1 C项目组2 D素材3 E消耗4 F_ROAS5
+  const mat = await readSheet(token, 'TOBfe9!A2:F3000');
   const agg = {};
   mat.forEach(x => {
     const s = serAny(x[1]); if (!x[3] || !s || s < since || s > Y.s) return;
-    const k = x[3]; (agg[k] = agg[k] || { grp: x[2], sp: 0 }).sp += pnum(x[4]);
+    const sp = pnum(x[4]);
+    const k = x[3]; const a = agg[k] = agg[k] || { grp: x[2], sp: 0, rn: 0 };
+    a.sp += sp; a.rn += sp * ppct(x[5]);
   });
   const top = Object.entries(agg).sort((a, b) => b[1].sp - a[1].sp).slice(0, 50);
   const matT = await ensureTable(token, '近30天-素材消耗Top', [
     { field_name: '创意素材名称', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 },
+    { field_name: '广告首日ROI', type: 2 },
   ], tables);
-  await writeRecs(token, matT, top.map(([m, v]) => ({ fields: { '创意素材名称': m, '项目组': v.grp || '', '消耗': f1(v.sp) } })));
+  await writeRecs(token, matT, top.map(([m, v]) => ({ fields: { '创意素材名称': m, '项目组': v.grp || '', '消耗': f1(v.sp), '广告首日ROI': v.sp ? f2(v.rn / v.sp) : null } })));
 
   console.log(`✅ 昨日速览: 总览1行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 / 素材Top${top.length} (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
 }
