@@ -50,6 +50,7 @@ const FIELDS = [
   { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '项目均ROI', type: 2 },
   { field_name: '近3日消耗', type: 2 }, { field_name: '日均消耗', type: 2 },
   { field_name: '点击率', type: 2 }, { field_name: 'CPM', type: 2 }, { field_name: '展示量', type: 2 },
+  { field_name: '广告新增', type: 2 }, { field_name: '新增成本', type: 2 },
   { field_name: '在投天数', type: 2 }, { field_name: '首投日期', type: 5 },
 ];
 
@@ -65,8 +66,9 @@ async function main() {
   rows.forEach(x => {
     const s = serAny(x[1]); if (!x[3] || !s || s < since || s > maxS) return;
     const sp = pnum(x[4]);
-    const a = agg[x[3]] = agg[x[3]] || { grp: x[2] || '', sp: 0, rn: 0, imp: 0, clk: 0, cpmW: 0, first: s, last: s, days: new Set(), last3: 0 };
+    const a = agg[x[3]] = agg[x[3]] || { grp: x[2] || '', sp: 0, rn: 0, imp: 0, clk: 0, cpmW: 0, first: s, last: s, days: new Set(), last3: 0, nu: 0 };
     a.sp += sp; a.rn += sp * ppct(x[5]); a.imp += pnum(x[7]); a.clk += pnum(x[7]) * ppct(x[8]); a.cpmW += sp;
+    const cost = pnum(x[6]); if (cost > 0) a.nu += sp / cost;  // 广告新增 = 消耗/单价 反推
     a.first = Math.min(a.first, s); a.last = Math.max(a.last, s); a.days.add(s);
     if (s >= maxS - 2) a.last3 += sp;
   });
@@ -91,13 +93,18 @@ async function main() {
       '消耗': f1(a.sp), '广告首日ROI': f2(roi), '项目均ROI': f2(pAvg),
       '近3日消耗': f1(a.last3), '日均消耗': f1(dayAvg),
       '点击率': a.imp ? f2(a.clk / a.imp) : null, 'CPM': a.imp ? f1(a.sp / a.imp * 1000) : null,
-      '展示量': Math.round(a.imp), '在投天数': a.days.size, '首投日期': (a.first - 25569) * 864e5,
+      '展示量': Math.round(a.imp), '广告新增': Math.round(a.nu), '新增成本': a.nu ? f2(a.sp / a.nu) : null,
+      '在投天数': a.days.size, '首投日期': (a.first - 25569) * 864e5,
     } };
   }).sort((a, b) => b.sortKey - a.sortKey).map(x => ({ fields: x.fields }));
 
   const tables = await listTables(token);
   let tid = tables.find(x => x.name === TABLE)?.table_id;
-  if (tid) await clearRecords(token, tid);
+  if (tid) {
+    await clearRecords(token, tid);
+    const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
+    for (const f of FIELDS) if (!exist.has(f.field_name)) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields`, token, { field_name: f.field_name, type: f.type });
+  }
   else tid = (await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables`, token, { table: { name: TABLE, fields: FIELDS } })).data?.table_id;
   for (let i = 0; i < recs.length; i += 200) { const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) }); if (w.code !== 0) throw new Error('write: ' + JSON.stringify(w).slice(0, 120)); }
 
