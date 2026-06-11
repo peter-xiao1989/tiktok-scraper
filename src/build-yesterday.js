@@ -67,6 +67,27 @@ async function main() {
     .map(x => ({ s: serAny(x[0]), sp: pnum(x[1]), rev: pnum(x[2]), roas: ppct(x[3]), cumROI: ppct(x[6]), nu: pnum(x[7]) }))
     .sort((a, b) => b.s - a.s);
   if (!ws.length) { console.log('无数据'); return; }
+  // 出价维度(2zDzau): B按天0 C项目组1 D游戏2 E出价3 F消耗4 G_ROAS5 → serial|scope|bid 聚合
+  const bidRows = (await readSheet(token, '2zDzau!B2:G300')).filter(x => x[0] && x[3]);
+  const bidAgg = {};
+  bidRows.forEach(x => {
+    const s0 = serAny(x[0]); if (!s0) return;
+    const sp = pnum(x[4]), rn = sp * ppct(x[5]);
+    for (const scope of ['@ALL', 'G:' + (x[1] || ''), 'P:' + (x[2] || '')]) {
+      const k = `${s0}|${scope}|${x[3]}`;
+      const a = bidAgg[k] = bidAgg[k] || { sp: 0, rn: 0 };
+      a.sp += sp; a.rn += rn;
+    }
+  });
+  const bidOf = (ser, scope) => {
+    const out = {};
+    for (const [label, bid] of [['手动', '手动出价'], ['自动', '自动出价']]) {
+      const a = bidAgg[`${ser}|${scope}|${bid}`];
+      out[label + '出价消耗'] = a ? f1(a.sp) : null;
+      out[label + '出价ROI'] = a && a.sp ? f2(a.rn / a.sp) : null;
+    }
+    return out;
+  };
   const Y = ws[0], P = ws[1] || null;  // 昨日(最新有数据日) / 前日
   const W = ws.find(x => x.s === Y.s - 7) || null;  // 上周同天(同 weekday,公平对比)
   const pending = Y.rev <= 0 && Y.sp > 0;
@@ -78,6 +99,8 @@ async function main() {
     { field_name: '消耗环比', type: 2 }, { field_name: '收入环比', type: 2 },
     { field_name: '消耗环比上周同天', type: 2 }, { field_name: '收入环比上周同天', type: 2 },
     { field_name: '收入状态', type: 1 }, { field_name: '是否昨日', type: 1 },
+    { field_name: '手动出价消耗', type: 2 }, { field_name: '手动出价ROI', type: 2 },
+    { field_name: '自动出价消耗', type: 2 }, { field_name: '自动出价ROI', type: 2 },
   ], tables);
   // 近 8 天每日一行(日期降序):指标卡 UI 可按"日期"字段开同环比(对比前一天/上周同天),
   // 预算环比列保留兼容现有卡。最新行收入未结算时标注。
@@ -92,6 +115,7 @@ async function main() {
       '收入环比上周同天': w && !pend ? chg(d.rev, w.rev) : null,
       '收入状态': pend ? '待结算(16点后更新)' : '已结算',
       '是否昨日': i === 0 ? '是' : '',
+      ...bidOf(d.s, '@ALL'),
     } };
   });
   await writeRecs(token, ovT, ovRecs);
@@ -103,6 +127,8 @@ async function main() {
     { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 },
     { field_name: '广告首日ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '消耗环比', type: 2 },
     { field_name: '是否昨日', type: 1 },
+    { field_name: '手动出价消耗', type: 2 }, { field_name: '手动出价ROI', type: 2 },
+    { field_name: '自动出价消耗', type: 2 }, { field_name: '自动出价ROI', type: 2 },
   ], tables);
   const pjRecs = [];
   ws.slice(0, 8).forEach((d, i) => {
@@ -111,7 +137,7 @@ async function main() {
       .sort((a, b) => b[1].sp - a[1].sp)
       .forEach(([g, v]) => pjRecs.push({ fields: { '项目组': g, '日期': msOf(d.s), '消耗': f1(v.sp), '收入': f1(v.rev),
         '广告首日ROI': f2(v.roas), '累计ROI': f2(v.cumROI), '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null,
-        '是否昨日': i === 0 ? '是' : '' } }));
+        '是否昨日': i === 0 ? '是' : '', ...bidOf(d.s, 'G:' + g) } }));
   });
   await writeRecs(token, pjT, pjRecs);
 
@@ -122,6 +148,8 @@ async function main() {
     { field_name: '游戏名称', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 },
     { field_name: '广告新增', type: 2 }, { field_name: '广告新增成本', type: 2 }, { field_name: '广告首日ROI', type: 2 },
     { field_name: '收入', type: 2 }, { field_name: '消耗环比', type: 2 }, { field_name: '是否昨日', type: 1 },
+    { field_name: '手动出价消耗', type: 2 }, { field_name: '手动出价ROI', type: 2 },
+    { field_name: '自动出价消耗', type: 2 }, { field_name: '自动出价ROI', type: 2 },
   ], tables);
   const pkRecs = [];
   ws.slice(0, 8).forEach((d, i) => {
@@ -130,7 +158,8 @@ async function main() {
       .sort((a, b) => b[1].sp - a[1].sp)
       .forEach(([g, v]) => pkRecs.push({ fields: { '游戏名称': g, '项目组': v.grp, '日期': msOf(d.s), '消耗': f1(v.sp),
         '广告新增': Math.round(v.adNew), '广告新增成本': f1(v.cost), '广告首日ROI': f2(v.roas), '收入': f1(v.rev),
-        '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null, '是否昨日': i === 0 ? '是' : '' } }));
+        '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null, '是否昨日': i === 0 ? '是' : '',
+        ...bidOf(d.s, 'P:' + g) } }));
   });
   await writeRecs(token, pkT, pkRecs);
 
