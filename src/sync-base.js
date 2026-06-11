@@ -24,6 +24,7 @@ const SKIP = new Set(['序号', '类别']);
 const RENAME = {
   '日经营数据汇总': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
   '项目维度经营表': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
+  '各产品经营日报表': { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本' },
 };
 const DATE_COLS = new Set(['统计周期', '按天', '更新时间', '日期']);
 const isPctCol = h => /ROAS|ROI|率/.test(h);

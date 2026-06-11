@@ -262,15 +262,18 @@ async function ensureReportFormulas(token) {
   const gameList = [];
   for (const grp of groups) for (const g of groupGames[grp]) gameList.push(g);
 
-  const adRows   = await readColsAll(token, 'uqJEhq', 'B', 'G');   // B游戏0 D日期2 E消耗3 F4 G活跃度5
+  const adRows   = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 X点击22 Y展示23 AD_gross28
   const prodRows = await readColsAll(token, 'c50205', 'C', 'AB');  // C游戏0 D日期1 E新增2 F活跃3 K进入8 L时长9 N启速11 O首启12 P启成率13 Y点击率22 Z_eCPM23 AA人均展示24 AB收入25
 
   const ag = {}, byGroup = {};  // ag: game|date→{sp,rn,act}; byGroup: group|date→总消耗
   adRows.forEach(r => {
     const g = r[0], d = r[2]; if (!g || !d) return;
     const e = pnum(r[3]); const k = `${g}|${d}`;
-    const x = ag[k] = ag[k] || { sp: 0, rn: 0, act: 0 };
+    const x = ag[k] = ag[k] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, clk: 0, imp: 0 };
+    const gross = pnum(r[28]), i = pnum(r[7]);
     x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]);
+    x.gross += gross; if (i > 0) x.eng += gross / i;
+    x.clk += pnum(r[22]); x.imp += pnum(r[23]);
     const grp = gameToGroup[g]; if (grp) byGroup[`${grp}|${d}`] = (byGroup[`${grp}|${d}`] || 0) + e;
   });
   const pm = {};  // game|date → 产品指标行
@@ -283,7 +286,7 @@ async function ensureReportFormulas(token) {
   const r1 = v => Math.round(v * 10) / 10;
   const rowsRaw = [];
   for (const date of dates) for (const game of gameList) {
-    const a = ag[`${game}|${date}`] || { sp: 0, rn: 0, act: 0 };
+    const a = ag[`${game}|${date}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, clk: 0, imp: 0 };
     const p = pm[`${game}|${date}`] || null;
     const rev = p ? pnum(p[25]) : 0;
     if (a.sp <= 0 && rev <= 0) continue;  // 双0行不写(等价于旧 filter 隐藏)
@@ -303,7 +306,10 @@ async function ensureReportFormulas(token) {
       case '游戏名称': return game;
       case '消耗': return r1(a.sp);
       case '广告收入 ROAS (TikTok)': return a.sp ? a.rn / a.sp : '';
+      case '活跃度': return a.act || a.sp ? Math.round(a.act) : '';   // 投放侧广告新增(unique first launch)
       case '活跃度平均成本': return a.act ? r1(a.sp / a.act) : '';
+      case '人均广告次数': return a.eng ? r1(a.gross / a.eng) : '';
+      case '点击率（目标页面）': return a.imp ? a.clk / a.imp : '';
       case '运营新增成本': return newU ? r1(a.sp / newU) : '';
       case '新增用户': return p ? Math.round(newU) : '';
       case '活跃用户': return p ? Math.round(pnum(p[3])) : '';
