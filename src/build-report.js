@@ -251,29 +251,81 @@ async function applyFilter(token, targetRow, showCol) {
   if (r.code !== 0) console.warn('  [warn] set filter:', JSON.stringify(r).slice(0, 150));
 }
 
+// node 算静态值:行=(游戏×日期),保留消耗>0或收入>0的行。投放侧聚合投放原表,
+// 产品侧取产品原表对应(游戏,日期)行。排序=日期降序 → 组消耗降序 → 组内游戏消耗
+// 降序。无公式、无 filter、无 helper 列 → 源表变动不触发重算。
 async function ensureReportFormulas(token) {
-  const { applyColumnFormats, wrapDecimals, getGroupMapping, getProductDateInfo, ensureGrid } = require('./build-summaries');
+  const { applyColumnFormats, getGroupMapping, getProductDateInfo, readColsAll,
+          writeStaticGrid, clearTrailingCols, dateToSerial, pnum, ppct } = require('./build-summaries');
   const header = await readHeader(token);
-  const { groups, groupGames } = await getGroupMapping(token);
-  const gameList = [], groupList = [];
-  for (const grp of groups) for (const g of groupGames[grp]) { gameList.push(g); groupList.push(grp); }
+  const { groups, groupGames, gameToGroup } = await getGroupMapping(token);
+  const gameList = [];
+  for (const grp of groups) for (const g of groupGames[grp]) gameList.push(g);
+
+  const adRows   = await readColsAll(token, 'uqJEhq', 'B', 'G');   // B游戏0 D日期2 E消耗3 F4 G活跃度5
+  const prodRows = await readColsAll(token, 'c50205', 'C', 'AB');  // C游戏0 D日期1 E新增2 F活跃3 K进入8 L时长9 N启速11 O首启12 P启成率13 Y点击率22 Z_eCPM23 AA人均展示24 AB收入25
+
+  const ag = {}, byGroup = {};  // ag: game|date→{sp,rn,act}; byGroup: group|date→总消耗
+  adRows.forEach(r => {
+    const g = r[0], d = r[2]; if (!g || !d) return;
+    const e = pnum(r[3]); const k = `${g}|${d}`;
+    const x = ag[k] = ag[k] || { sp: 0, rn: 0, act: 0 };
+    x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]);
+    const grp = gameToGroup[g]; if (grp) byGroup[`${grp}|${d}`] = (byGroup[`${grp}|${d}`] || 0) + e;
+  });
+  const pm = {};  // game|date → 产品指标行
+  prodRows.forEach(r => { if (r[0] && r[1]) pm[`${r[0]}|${r[1]}`] = r; });
+
   const { maxSerial, minSerial } = await getProductDateInfo(token);
-  // resolve 项目维度经营表 columns by header name (sheet may have a 序号 col)
-  const ph = {};
-  (await readHeader(token, 'JIKPZV')).forEach((n, j) => { if (n && !ph[n]) ph[n] = colLetter(j + 1); });
-  const projCols = { grp: ph['项目组'] || 'A', date: ph['统计周期'] || 'B', spend: ph['消耗'] || 'C' };
-  const { plan, dateCol, roasCol, intCols, helpStart, helpEnd, showCol, G } =
-    buildPlan(header, gameList, groupList, maxSerial, minSerial, projCols);
-  const spanDays = Math.max(1, maxSerial - minSerial + 1);
-  const targetRow = spanDays * G + 1 + ROW_BUFFER;
-  console.log(`  日报表网格: ${gameList.length} 游戏 × ${spanDays} 天, 填充 2..${targetRow}`);
-  await ensureGrid(token, REPORT_SHEET_ID, targetRow + 5, helpEnd + 1);
-  wrapDecimals(plan, header);
-  await writeFormulas(token, targetRow, plan);
-  await applyColumnFormats(token, REPORT_SHEET_ID, header, targetRow);
-  await applyFilter(token, targetRow, showCol);
-  await hideHelperCols(token, helpStart, helpEnd);
-  return targetRow;
+  const dates = [];
+  for (let s = maxSerial; s >= minSerial; s--) dates.push(new Date(Math.round((s - 25569) * 864e5)).toISOString().slice(0, 10));
+
+  const r1 = v => Math.round(v * 10) / 10;
+  const rowsRaw = [];
+  for (const date of dates) for (const game of gameList) {
+    const a = ag[`${game}|${date}`] || { sp: 0, rn: 0, act: 0 };
+    const p = pm[`${game}|${date}`] || null;
+    const rev = p ? pnum(p[25]) : 0;
+    if (a.sp <= 0 && rev <= 0) continue;  // 双0行不写(等价于旧 filter 隐藏)
+    rowsRaw.push({ game, date, grp: gameToGroup[game] || '', a, p, rev,
+      gs: byGroup[`${(gameToGroup[game] || '')}|${date}`] || 0 });
+  }
+  rowsRaw.sort((x, y) =>
+    (dateToSerial(y.date) - dateToSerial(x.date)) || (y.gs - x.gs) || (y.a.sp - x.a.sp));
+
+  const cellOf = (name, row, seq) => {
+    const { a, p, game, date, grp, rev } = row;
+    const newU = p ? pnum(p[2]) : 0;
+    switch (name) {
+      case '序号': return seq;
+      case '统计周期': return dateToSerial(date);
+      case '项目组': return grp;
+      case '游戏名称': return game;
+      case '消耗': return r1(a.sp);
+      case '广告收入 ROAS (TikTok)': return a.sp ? a.rn / a.sp : '';
+      case '活跃度平均成本': return a.act ? r1(a.sp / a.act) : '';
+      case '运营新增成本': return newU ? r1(a.sp / newU) : '';
+      case '新增用户': return p ? Math.round(newU) : '';
+      case '活跃用户': return p ? Math.round(pnum(p[3])) : '';
+      case '人均进入次数': return p ? r1(pnum(p[8])) : '';
+      case '每位用户平均时长(分)': return p ? r1(pnum(p[9])) : '';
+      case '平均启动速度(秒)': return p ? r1(pnum(p[11])) : '';
+      case '平均首次启动速度(秒)': return p ? r1(pnum(p[12])) : '';
+      case '启动成功率': return p ? ppct(p[13]) : '';
+      case 'eCPM': return p ? r1(pnum(p[23])) : '';
+      case '广告点击率': return p ? ppct(p[22]) : '';
+      case '人均广告展示次数': return p ? r1(pnum(p[24])) : '';
+      case '广告总收入': return r1(rev);
+      default: return '';
+    }
+  };
+  const grid = rowsRaw.map((row, i) => header.map(name => (name ? cellOf(name, row, i + 1) : '')));
+  const clearRows = rowsRaw.length + 1 + ROW_BUFFER;
+  console.log(`  产品经营日报表(静态值): ${gameList.length}游戏 × ${dates.length}天 → ${rowsRaw.length}行(消耗或收入>0)`);
+  await writeStaticGrid(token, REPORT_SHEET_ID, header, grid, clearRows);
+  await clearTrailingCols(token, REPORT_SHEET_ID, header.length + 1, clearRows);
+  await applyColumnFormats(token, REPORT_SHEET_ID, header, rowsRaw.length + 1);
+  return rowsRaw.length + 1;
 }
 
 async function main() {

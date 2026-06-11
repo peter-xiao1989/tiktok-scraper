@@ -454,67 +454,46 @@ async function getAdProductInfo(token) {
   return { adRowCount: rowCount, posCount };
 }
 
+// node 算静态值:按(日期×游戏)聚合投放数据,消耗>0,日期降序+同日消耗降序。
+// 人均广告次数 = Σgross / Σengaged(engaged = gross/投放!I 反推)。无公式。
 async function ensureAdProductSummary(token) {
   const header = await readHeader(token, AD_PRODUCT_SHEET_ID);
-  const L = {};
-  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
-  const need = n => { if (!L[n]) throw new Error(`投放日表-产品维度缺少表头: ${n}`); return L[n]; };
-  const seqCol = need('序号'), dateCol = need('按天'), grpCol = need('项目组'), gameCol = need('游戏名称'),
-        spendCol = need('消耗'), roasCol = need('广告收入 ROAS (TikTok)'), acostCol = need('活跃度平均成本'),
-        actCol = need('活跃度'), apcCol = need('人均广告次数');
-
-  const { adRowCount, posCount } = await getAdProductInfo(token);
   const { gameToGroup } = await getGroupMapping(token);
-  const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };  // product groups + manual extras
-  const mapGames = Object.keys(fullMap);
-  const gamesArr = `{${mapGames.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
-  const groupsArr = `{${mapGames.map(x => `"${fullMap[x]}"`).join(',')}}`;
-  const helperRows = adRowCount + 1 + 500;     // covers ad rows + growth
-  const mainRows = posCount + 1 + 150;          // visible rows + buffer
-  console.log(`  投放日表-产品维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
+  const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
+  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28
+  const by = {};  // "date|game" -> {sp,rn,act,gross,eng}
+  const c = (d, g) => (by[`${d}|${g}`] = by[`${d}|${g}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, game: g, date: d });
+  ad.forEach(r => {
+    const g = r[0], d = r[2]; if (!g || !d) return;
+    const e = pnum(r[3]), gross = pnum(r[28]), i = pnum(r[7]);
+    const x = c(d, g); x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]); x.gross += gross;
+    if (i > 0) x.eng += gross / i;
+  });
+  const rows = Object.values(by).filter(x => x.sp > 0)
+    .sort((a, b) => (dateToSerial(b.date) - dateToSerial(a.date)) || (b.sp - a.sp));
 
-  // 投放数据原表 ranges
-  const AB = `${ADS}!$B$2:$B$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
-        AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AAD = `${ADS}!$AD$2:$AD$5000`;
-  // hidden helper columns: T isFirst, U gameDaySpend, V key, W matchedRow
-  const T = 'T', U = 'U', V = 'V', W = 'W';
-
-  // helper formulas over ad rows (row i ↔ 投放 row i)
-  const helperPlan = {
-    [T]: i => `=IF(${ADS}!$B${i}="","",IF(COUNTIFS(${ADS}!$B$2:$B${i},${ADS}!$B${i},${ADS}!$D$2:$D${i},${ADS}!$D${i})=1,1,0))`,
-    [U]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i}))`,
-    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*10000000+$${U}${i},"")`,
+  const r1 = v => Math.round(v * 10) / 10;
+  const cellOf = (name, row, seq) => {
+    switch (name) {
+      case '序号': return seq;
+      case '按天': return dateToSerial(row.date);
+      case '项目组': return fullMap[row.game] || '';
+      case '游戏名称': return row.game;
+      case '消耗': return r1(row.sp);
+      case '广告收入 ROAS (TikTok)': return row.sp ? row.rn / row.sp : '';
+      case '活跃度平均成本': return row.act ? r1(row.sp / row.act) : '';
+      case '活跃度': return Math.round(row.act);
+      case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      default: return '';
+    }
   };
-  // main formulas (row r): W=matched ad row via LARGE on key column
-  const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
-  const g = r => `$${gameCol}${r}`, dt = r => `$${dateCol}${r}`;
-  const ifg = (r, body) => `=IF(${g(r)}="","",${body})`;
-  const mainPlan = {
-    [W]: r => `=IFERROR(MATCH(LARGE(${VR},ROW()-1),${VR},0),"")`,
-    [gameCol]: r => `=IF($${W}${r}="","",INDEX(${AB},$${W}${r}))`,
-    [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
-    [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
-    [seqCol]: r => `=IF(${g(r)}="","",ROW()-1)`,
-    [grpCol]: r => ifg(r, `IFERROR(INDEX(${groupsArr},MATCH(${g(r)},${gamesArr},0)),"")`),
-    [actCol]: r => ifg(r, `SUMIFS(${AG},${AB},${g(r)},${AD},${dt(r)})`),
-    [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/$${actCol}${r},"")`),
-    [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
-    // 人均广告次数 = Σgross / Σengaged; engaged reconstructed as gross/投放!I per row
-    [apcCol]: r => ifg(r, `IFERROR(SUMIFS(${AAD},${AB},${g(r)},${AD},${dt(r)})/SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(N(${ADS}!$I$2:$I$5000)>0)*${AAD}/(N(${ADS}!$I$2:$I$5000)+(N(${ADS}!$I$2:$I$5000)=0))),"")`),
-  };
-
-  // write helper columns (rows 2..helperRows)
-  await writeCols(token, AD_PRODUCT_SHEET_ID, helperPlan, helperRows);
-  // write main columns (rows 2..mainRows)
-  wrapDecimals(mainPlan, header);
-  await writeCols(token, AD_PRODUCT_SHEET_ID, mainPlan, mainRows);
-  // formats: date col, ROAS percent
-  await applyColumnFormats(token, AD_PRODUCT_SHEET_ID, header, mainRows);
-  // hide helper columns T..W (index 19..22)
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: AD_PRODUCT_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
-      dimensionProperties: { visible: false } }).catch(() => {});
-  return mainRows;
+  const grid = rows.map((row, i) => header.map(name => (name ? cellOf(name, row, i + 1) : '')));
+  const clearRows = rows.length + 1 + ROW_BUFFER;
+  console.log(`  投放日表-产品维度(静态值): ${rows.length} 行(消耗>0)`);
+  await writeStaticGrid(token, AD_PRODUCT_SHEET_ID, header, grid, clearRows);
+  await clearTrailingCols(token, AD_PRODUCT_SHEET_ID, header.length + 1, clearRows);
+  await applyColumnFormats(token, AD_PRODUCT_SHEET_ID, header, rows.length + 1);
+  return rows.length + 1;
 }
 
 // Write a {col: gen(r)} plan over rows 2..targetRow in batches.
@@ -562,64 +541,48 @@ async function getAdMaterialInfo(token) {
   return { adRowCount: rowCount, posCount: Object.values(spend).filter(v => v > 0).length };
 }
 
+// node 算静态值:按(日期×创意素材)聚合,消耗>0,日期降序+消耗降序。组=素材所属
+// 游戏→组。展示量/点击率/CPM 从投放原表聚合。无公式。
 async function ensureAdMaterialSummary(token) {
   const header = await readHeader(token, AD_MATERIAL_SHEET_ID);
-  const L = {};
-  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
-  const need = (...names) => { for (const n of names) if (L[n]) return L[n]; throw new Error(`投放日表-素材维度缺少表头: ${names.join('/')}`); };
-  const seqCol = need('序号'), dateCol = need('按天'), grpCol = need('项目组'), matCol = need('创意素材名称'),
-        spendCol = need('消耗'), roasCol = need('广告收入 ROAS (TikTok)'), acostCol = need('活跃度平均成本'),
-        impCol = need('展示量'), ctrCol = need('点击率（目标页面）'), cpmCol = need('千次展示成本 (CPM)'),
-        apcCol = need('人均广告次数');
-
-  const { adRowCount, posCount } = await getAdMaterialInfo(token);
   const { gameToGroup } = await getGroupMapping(token);
   const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
-  const mapGames = Object.keys(fullMap);
-  const gamesArr = `{${mapGames.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
-  const groupsArr = `{${mapGames.map(x => `"${fullMap[x]}"`).join(',')}}`;
-  const helperRows = adRowCount + 1 + 500;
-  const mainRows = posCount + 1 + 300;
-  console.log(`  投放日表-素材维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
+  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I7 M素材11 X点击22 Y展示23 AD_gross28
+  const by = {};  // "date|material" -> {...}
+  const c = (d, m, g) => { const k = `${d}|${m}`; const x = by[k] = by[k] || { sp: 0, rn: 0, act: 0, imp: 0, clk: 0, gross: 0, eng: 0, mat: m, date: d, game: '' }; if (g && !x.game) x.game = g; return x; };
+  ad.forEach(r => {
+    const g = r[0], d = r[2], m = r[11]; if (!m || !d) return;
+    const e = pnum(r[3]), gross = pnum(r[28]), i = pnum(r[7]);
+    const x = c(d, m, g); x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]); x.imp += pnum(r[23]); x.clk += pnum(r[22]); x.gross += gross;
+    if (i > 0) x.eng += gross / i;
+  });
+  const rows = Object.values(by).filter(x => x.sp > 0)
+    .sort((a, b) => (dateToSerial(b.date) - dateToSerial(a.date)) || (b.sp - a.sp));
 
-  const AM = `${ADS}!$M$2:$M$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
-        AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AB = `${ADS}!$B$2:$B$5000`,
-        AX = `${ADS}!$X$2:$X$5000`, AY = `${ADS}!$Y$2:$Y$5000`, AAD = `${ADS}!$AD$2:$AD$5000`;
-  const T = 'T', U = 'U', V = 'V', W = 'W';
-  const helperPlan = {
-    [T]: i => `=IF(${ADS}!$M${i}="","",IF(COUNTIFS(${ADS}!$M$2:$M${i},${ADS}!$M${i},${ADS}!$D$2:$D${i},${ADS}!$D${i})=1,1,0))`,
-    [U]: i => `=IF(${ADS}!$M${i}="","",SUMIFS(${AE},${AM},${ADS}!$M${i},${AD},${ADS}!$D${i}))`,
-    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*10000000+$${U}${i},"")`,
+  const r1 = v => Math.round(v * 10) / 10;
+  const cellOf = (name, row, seq) => {
+    switch (name) {
+      case '序号': return seq;
+      case '按天': return dateToSerial(row.date);
+      case '项目组': return fullMap[row.game] || '';
+      case '创意素材名称': return row.mat;
+      case '消耗': return r1(row.sp);
+      case '广告收入 ROAS (TikTok)': return row.sp ? row.rn / row.sp : '';
+      case '活跃度平均成本': return row.act ? r1(row.sp / row.act) : '';
+      case '展示量': return Math.round(row.imp);
+      case '点击率（目标页面）': return row.imp ? row.clk / row.imp : '';
+      case '千次展示成本 (CPM)': return row.imp ? r1(row.sp / row.imp * 1000) : '';
+      case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      default: return '';
+    }
   };
-  const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
-  const m = r => `$${matCol}${r}`, dt = r => `$${dateCol}${r}`;
-  const ifm = (r, body) => `=IF(${m(r)}="","",${body})`;
-  const sif = (range, r) => `SUMIFS(${range},${AM},${m(r)},${AD},${dt(r)})`;
-  const mainPlan = {
-    [W]: r => `=IFERROR(MATCH(LARGE(${VR},ROW()-1),${VR},0),"")`,
-    [matCol]: r => `=IF($${W}${r}="","",INDEX(${AM},$${W}${r}))`,
-    [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
-    [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
-    [seqCol]: r => `=IF(${m(r)}="","",ROW()-1)`,
-    // material → game (the matched ad row's 游戏) → group
-    [grpCol]: r => `=IF($${W}${r}="","",IFERROR(INDEX(${groupsArr},MATCH(INDEX(${AB},$${W}${r}),${gamesArr},0)),""))`,
-    [impCol]: r => ifm(r, sif(AY, r)),
-    [acostCol]: r => ifm(r, `IFERROR($${spendCol}${r}/${sif(AG, r)},"")`),
-    [roasCol]: r => ifm(r, `IFERROR(SUMPRODUCT((${AM}=${m(r)})*(${AD}=${dt(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
-    [ctrCol]: r => ifm(r, `IFERROR(${sif(AX, r)}/$${impCol}${r},"")`),
-    [cpmCol]: r => ifm(r, `IFERROR($${spendCol}${r}/$${impCol}${r}*1000,"")`),
-    // 人均广告次数 = Σgross / Σengaged; engaged = gross/投放!I per row
-    [apcCol]: r => ifm(r, `IFERROR(${sif(AAD, r)}/SUMPRODUCT((${AM}=${m(r)})*(${AD}=${dt(r)})*(N(${ADS}!$I$2:$I$5000)>0)*${AAD}/(N(${ADS}!$I$2:$I$5000)+(N(${ADS}!$I$2:$I$5000)=0))),"")`),
-  };
-
-  await writeCols(token, AD_MATERIAL_SHEET_ID, helperPlan, helperRows);
-  wrapDecimals(mainPlan, header);
-  await writeCols(token, AD_MATERIAL_SHEET_ID, mainPlan, mainRows);
-  await applyColumnFormats(token, AD_MATERIAL_SHEET_ID, header, mainRows);
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: AD_MATERIAL_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 23 },
-      dimensionProperties: { visible: false } }).catch(() => {});
-  return mainRows;
+  const grid = rows.map((row, i) => header.map(name => (name ? cellOf(name, row, i + 1) : '')));
+  const clearRows = rows.length + 1 + ROW_BUFFER;
+  console.log(`  投放日表-素材维度(静态值): ${rows.length} 行(消耗>0)`);
+  await writeStaticGrid(token, AD_MATERIAL_SHEET_ID, header, grid, clearRows);
+  await clearTrailingCols(token, AD_MATERIAL_SHEET_ID, header.length + 1, clearRows);
+  await applyColumnFormats(token, AD_MATERIAL_SHEET_ID, header, rows.length + 1);
+  return rows.length + 1;
 }
 
 // ─── 投放日表-出价维度 (2zDzau) ─────────────────────────────────────────────
@@ -648,66 +611,50 @@ async function getAdBidInfo(token) {
   return { adRowCount: rowCount, posCount: Object.values(spend).filter(v => v > 0).length };
 }
 
+// node 算静态值:按(日期×游戏×出价方式)聚合,消耗>0。排序=日期降序 → 游戏聚类
+// (按游戏总消耗) → 同游戏内出价按消耗降序。无公式。
 async function ensureAdBidSummary(token) {
   const header = await readHeader(token, AD_BID_SHEET_ID);
-  const L = {};
-  header.forEach((name, j) => { if (name && !L[name]) L[name] = colLetter(j + 1); });
-  const need = (...names) => { for (const n of names) if (L[n]) return L[n]; throw new Error(`投放日表-出价维度缺少表头: ${names.join('/')}`); };
-  const seqCol = need('序号'), dateCol = need('按天'), grpCol = need('项目组'), gameCol = need('游戏名称'),
-        bidCol = need('出价方式'), spendCol = need('消耗'), roasCol = need('广告收入 ROAS (TikTok)'),
-        acostCol = need('活跃度平均成本'), actCol = need('活跃度'), apcCol = need('人均广告次数');
-
-  const { adRowCount, posCount } = await getAdBidInfo(token);
   const { gameToGroup } = await getGroupMapping(token);
   const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
-  const mapGames = Object.keys(fullMap);
-  const gamesArr = `{${mapGames.map(x => `"${x.replace(/"/g, '""')}"`).join(',')}}`;
-  const groupsArr = `{${mapGames.map(x => `"${fullMap[x]}"`).join(',')}}`;
-  const helperRows = adRowCount + 1 + 500;
-  const mainRows = posCount + 1 + 200;
-  console.log(`  投放日表-出价维度: ${posCount} 组(消耗>0), helper→${helperRows}, main→${mainRows}`);
+  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28 AT出价44
+  const by = {}, gameTot = {};  // by: date|game|bid ; gameTot: date|game → 总消耗
+  const c = (d, g, b) => (by[`${d}|${g}|${b}`] = by[`${d}|${g}|${b}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, game: g, date: d, bid: b });
+  ad.forEach(r => {
+    const g = r[0], d = r[2], b = r[44]; if (!g || !d || !b) return;
+    const e = pnum(r[3]), gross = pnum(r[28]), i = pnum(r[7]);
+    const x = c(d, g, b); x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]); x.gross += gross;
+    if (i > 0) x.eng += gross / i;
+    gameTot[`${d}|${g}`] = (gameTot[`${d}|${g}`] || 0) + e;
+  });
+  const rows = Object.values(by).filter(x => x.sp > 0).sort((a, b) =>
+    (dateToSerial(b.date) - dateToSerial(a.date)) ||
+    (gameTot[`${b.date}|${b.game}`] - gameTot[`${a.date}|${a.game}`]) ||   // 游戏聚类
+    (b.sp - a.sp));                                                       // 同游戏内消耗降序
 
-  const AB = `${ADS}!$B$2:$B$5000`, AD = `${ADS}!$D$2:$D$5000`, AE = `${ADS}!$E$2:$E$5000`,
-        AF = `${ADS}!$F$2:$F$5000`, AG = `${ADS}!$G$2:$G$5000`, AAD = `${ADS}!$AD$2:$AD$5000`,
-        AAT = `${ADS}!$AT$2:$AT$5000`;
-  const T = 'T', U = 'U', V = 'V', W = 'W', X = 'X';
-  // Sort key clusters by game (game total spend, all bids), then by this row's
-  // (game,bid) spend within the game: date*1e8 + ROUND(gameTotal)*1e4 + ROUND(bidSpend,1)*10.
-  const helperPlan = {
-    [T]: i => `=IF(${ADS}!$B${i}="","",IF(COUNTIFS(${ADS}!$B$2:$B${i},${ADS}!$B${i},${ADS}!$D$2:$D${i},${ADS}!$D${i},${ADS}!$AT$2:$AT${i},${ADS}!$AT${i})=1,1,0))`,
-    [U]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i},${AAT},${ADS}!$AT${i}))`,
-    [X]: i => `=IF(${ADS}!$B${i}="","",SUMIFS(${AE},${AB},${ADS}!$B${i},${AD},${ADS}!$D${i}))`,  // game total (all bids)
-    [V]: i => `=IF(AND($${T}${i}=1,$${U}${i}>0),DATEVALUE(${ADS}!$D${i})*100000000+ROUND($${X}${i},0)*10000+ROUND($${U}${i},1)*10,"")`,
+  const r1 = v => Math.round(v * 10) / 10;
+  const cellOf = (name, row, seq) => {
+    switch (name) {
+      case '序号': return seq;
+      case '按天': return dateToSerial(row.date);
+      case '项目组': return fullMap[row.game] || '';
+      case '游戏名称': return row.game;
+      case '出价方式': return row.bid;
+      case '消耗': return r1(row.sp);
+      case '广告收入 ROAS (TikTok)': return row.sp ? row.rn / row.sp : '';
+      case '活跃度平均成本': return row.act ? r1(row.sp / row.act) : '';
+      case '活跃度': return Math.round(row.act);
+      case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      default: return '';
+    }
   };
-  const VR = `$${V}$2:$${V}$5000`, UR = `$${U}$2:$${U}$5000`;
-  const g = r => `$${gameCol}${r}`, dt = r => `$${dateCol}${r}`, bd = r => `$${bidCol}${r}`;
-  const ifg = (r, body) => `=IF(${g(r)}="","",${body})`;
-  // SUMIFS keyed on game + date + 出价方式
-  const sif = (range, r) => `SUMIFS(${range},${AB},${g(r)},${AD},${dt(r)},${AAT},${bd(r)})`;
-  const mainPlan = {
-    [W]: r => `=IFERROR(MATCH(LARGE(${VR},ROW()-1),${VR},0),"")`,
-    [gameCol]: r => `=IF($${W}${r}="","",INDEX(${AB},$${W}${r}))`,
-    [dateCol]: r => `=IF($${W}${r}="","",INDEX(${AD},$${W}${r}))`,
-    [bidCol]: r => `=IF($${W}${r}="","",INDEX(${AAT},$${W}${r}))`,
-    [spendCol]: r => `=IF($${W}${r}="","",INDEX(${UR},$${W}${r}))`,
-    [seqCol]: r => `=IF(${g(r)}="","",ROW()-1)`,
-    [grpCol]: r => ifg(r, `IFERROR(INDEX(${groupsArr},MATCH(${g(r)},${gamesArr},0)),"")`),
-    [actCol]: r => ifg(r, sif(AG, r)),
-    [acostCol]: r => ifg(r, `IFERROR($${spendCol}${r}/${sif(AG, r)},"")`),
-    [roasCol]: r => ifg(r, `IFERROR(SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(${AAT}=${bd(r)})*${AF}*${AE})/$${spendCol}${r},"")`),
-    // 人均广告次数 = Σgross / Σengaged; engaged = gross/投放!I per row (game+date+bid)
-    [apcCol]: r => ifg(r, `IFERROR(${sif(AAD, r)}/SUMPRODUCT((${AB}=${g(r)})*(${AD}=${dt(r)})*(${AAT}=${bd(r)})*(N(${ADS}!$I$2:$I$5000)>0)*${AAD}/(N(${ADS}!$I$2:$I$5000)+(N(${ADS}!$I$2:$I$5000)=0))),"")`),
-  };
-
-  wrapDecimals(mainPlan, header);
-  await writeCols(token, AD_BID_SHEET_ID, helperPlan, helperRows);
-  await writeCols(token, AD_BID_SHEET_ID, mainPlan, mainRows);
-  await applyColumnFormats(token, AD_BID_SHEET_ID, header, mainRows);
-  // hide helper cols T,U,V,W,X (indices 19..23)
-  await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/dimension_range`, token,
-    { dimension: { sheetId: AD_BID_SHEET_ID, majorDimension: 'COLUMNS', startIndex: 19, endIndex: 24 },
-      dimensionProperties: { visible: false } }).catch(() => {});
-  return mainRows;
+  const grid = rows.map((row, i) => header.map(name => (name ? cellOf(name, row, i + 1) : '')));
+  const clearRows = rows.length + 1 + ROW_BUFFER;
+  console.log(`  投放日表-出价维度(静态值): ${rows.length} 行(消耗>0)`);
+  await writeStaticGrid(token, AD_BID_SHEET_ID, header, grid, clearRows);
+  await clearTrailingCols(token, AD_BID_SHEET_ID, header.length + 1, clearRows);
+  await applyColumnFormats(token, AD_BID_SHEET_ID, header, rows.length + 1);
+  return rows.length + 1;
 }
 
 async function main() {
@@ -748,4 +695,5 @@ module.exports = {
   ensureDailySummary, ensureProjectSummary, ensureAdProductSummary, ensureAdMaterialSummary,
   ensureAdBidSummary,
   getFeishuToken, getGroupMapping, getProductDateInfo, EXTRA_GROUP_MAP, applyColumnFormats, wrapDecimals, ensureGrid,
+  readColsAll, writeStaticGrid, clearTrailingCols, dateToSerial, pnum, ppct,
 };
