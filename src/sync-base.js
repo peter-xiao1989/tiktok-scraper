@@ -20,6 +20,10 @@ const SHEETS = [
   ['dbGqhL', '分时素材效果表', 'fenshi'],
 ];
 const SKIP = new Set(['序号', '类别']);
+// 多维表字段显示名重命名(值和来源不变,只改多维表里的列名)。key=多维表名。
+const RENAME = {
+  '日经营数据汇总': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
+};
 const DATE_COLS = new Set(['统计周期', '按天', '更新时间', '日期']);
 const isPctCol = h => /ROAS|ROI|率/.test(h);
 
@@ -80,8 +84,9 @@ async function syncTable(token, sheet, name, tables) {
   const rawHeader = grid[0];
   const keep = rawHeader.map((h, j) => ({ h: String(h || '').trim(), j }))
     .filter(x => x.h && !x.h.startsWith('_') && !SKIP.has(x.h) && !/^序号\d+$/.test(x.h)
-      && !/^\d+(\.\d+)?$/.test(x.h));   // 排除纯数字列名(日期serial 等污染表头)
-  const header = keep.map(x => x.h);
+      && !/^\d+(\.\d+)?$/.test(x.h) && !/^test\d*$/i.test(x.h));   // 排除纯数字/test 等污染表头
+  const rmap = RENAME[name] || {};
+  const header = keep.map(x => rmap[x.h] || x.h);   // 字段显示名重命名(值不变)
   const data = grid.slice(1).map(row => keep.map(x => String(row[x.j] ?? '').trim())).filter(r => r.some(v => v));
   if (!data.length) { console.log(`  ${name}: 无数据行,跳过`); return; }
 
