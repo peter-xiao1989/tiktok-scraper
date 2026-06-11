@@ -1,5 +1,0 @@
-# This file is kept for manual dispatch only.
-# Scheduled jobs have been moved to:
-#   daily-product.yml  — 16:00 BJT (product data from Developer Portal)
-#   daily-ads.yml      — 07:00 BJT (ad data from Marketing API)
-#   realtime.yml       — every 2h  (realtime ad data)
