@@ -77,16 +77,24 @@ async function main() {
     { field_name: '广告首日ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '累计ROI', type: 2 },
     { field_name: '消耗环比', type: 2 }, { field_name: '收入环比', type: 2 },
     { field_name: '消耗环比上周同天', type: 2 }, { field_name: '收入环比上周同天', type: 2 },
-    { field_name: '收入状态', type: 1 },
+    { field_name: '收入状态', type: 1 }, { field_name: '是否昨日', type: 1 },
   ], tables);
-  await writeRecs(token, ovT, [{ fields: {
-    '日期': msOf(Y.s), '消耗': f1(Y.sp), '收入': f1(Y.rev), '广告首日ROI': f2(Y.roas),
-    '新增用户': Math.round(Y.nu), '累计ROI': f2(Y.cumROI),
-    '消耗环比': P ? chg(Y.sp, P.sp) : null, '收入环比': P && !pending ? chg(Y.rev, P.rev) : null,
-    '消耗环比上周同天': W ? chg(Y.sp, W.sp) : null,
-    '收入环比上周同天': W && !pending ? chg(Y.rev, W.rev) : null,
-    '收入状态': pending ? '待结算(16点后更新)' : '已结算',
-  } }]);
+  // 近 8 天每日一行(日期降序):指标卡 UI 可按"日期"字段开同环比(对比前一天/上周同天),
+  // 预算环比列保留兼容现有卡。最新行收入未结算时标注。
+  const ovRecs = ws.slice(0, 8).map((d, i) => {
+    const p = ws[i + 1] || null, w = ws.find(x => x.s === d.s - 7) || null;
+    const pend = d.rev <= 0 && d.sp > 0;
+    return { fields: {
+      '日期': msOf(d.s), '消耗': f1(d.sp), '收入': f1(d.rev), '广告首日ROI': f2(d.roas),
+      '新增用户': Math.round(d.nu), '累计ROI': f2(d.cumROI),
+      '消耗环比': p ? chg(d.sp, p.sp) : null, '收入环比': p && !pend ? chg(d.rev, p.rev) : null,
+      '消耗环比上周同天': w ? chg(d.sp, w.sp) : null,
+      '收入环比上周同天': w && !pend ? chg(d.rev, w.rev) : null,
+      '收入状态': pend ? '待结算(16点后更新)' : '已结算',
+      '是否昨日': i === 0 ? '是' : '',
+    } };
+  });
+  await writeRecs(token, ovT, ovRecs);
 
   // ── 项目维度(昨日各组,消耗降序) ── JIKPZV: B组 C日期 D消耗 E收入 F广告首日ROI ... I累计ROI
   const jk = (await readSheet(token, 'JIKPZV!B2:I500')).filter(x => x[0] && serAny(x[1]));
@@ -124,7 +132,7 @@ async function main() {
     .map(x => ({ fields: { '项目组': x[0], '日期': msOf(serAny(x[1])), '消耗': f1(pnum(x[2])) } }));
   await writeRecs(token, r30T, r30);
 
-  console.log(`✅ 昨日速览: 总览1行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
+  console.log(`✅ 昨日速览: 总览${ovRecs.length}行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
 module.exports = { main };
