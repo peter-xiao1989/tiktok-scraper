@@ -193,11 +193,12 @@ async function main() {
     { field_name: '日期', type: 5 }, { field_name: '出价方式', type: 1 },
     { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
   ], tables);
-  const bidWideT = await ensureTable(token, '近30天-出价日对比', [
+  const bidWideT = await ensureTable(token, '近15天-出价日对比', [
     { field_name: '日期', type: 5 },
     { field_name: '手动出价消耗', type: 2 }, { field_name: '自动出价消耗', type: 2 },
     { field_name: '手动出价ROI', type: 2 }, { field_name: '自动出价ROI', type: 2 },
   ], tables);
+  const wideSince = Y.s - 14;  // 宽表(组合图)近15天;长表(占比圆盘)保持近30天
   const longRecs = [], wideRecs = [];
   for (let s30 = bidSince; s30 <= Y.s; s30++) {
     const b = bidOf(s30, '@ALL');
@@ -206,7 +207,7 @@ async function main() {
       if (b[lb + '出价消耗'] == null) continue;
       longRecs.push({ fields: { '日期': msOf(s30), '出价方式': lb + '出价', '消耗': b[lb + '出价消耗'], '广告首日ROI': b[lb + '出价ROI'] } });
     }
-    wideRecs.push({ fields: { '日期': msOf(s30), ...b } });
+    if (s30 >= wideSince) wideRecs.push({ fields: { '日期': msOf(s30), ...b } });
   }
   await writeRecs(token, bidLongT, longRecs);
   await writeRecs(token, bidWideT, wideRecs);
