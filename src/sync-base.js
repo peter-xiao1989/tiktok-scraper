@@ -13,29 +13,30 @@ const BASE = process.env.OVERVIEW_BASE || 'YB8TbS45kaO1gesMtqlc8kpznEb';
 // (sheet_id, 多维表名, 组)
 const SHEETS = [
   ['wAsSso', '日经营数据汇总', 'chanpin'],
-  ['JIKPZV', '各项目经营概览(每日)', 'chanpin'],
-  ['6B1PVx', '各包体经营概览(每日)', 'chanpin'],
-  ['kX0M0R', '投放日报-产品维度', 'toufang'],
-  ['TOBfe9', '投放日报-素材维度', 'toufang'],
-  ['dbGqhL', '分时素材效果表', 'fenshi'],
-  ['jdlBTh', '分时同步数据汇总', 'fenshi'],
+  ['JIKPZV', '【经营日报】-项目维度', 'chanpin'],
+  ['6B1PVx', '【经营日报】-包体维度', 'chanpin'],
+  ['kX0M0R', '【投放日报】-产品维度', 'toufang'],
+  ['TOBfe9', '【投放日报】-素材维度', 'toufang'],
+  ['dbGqhL', '【每小时】素材数据监测', 'fenshi'],
+  ['jdlBTh', '【每小时】投放数据监测', 'fenshi'],
 ];
 // 该字段为空的行跳过(去掉电子表格里的"汇总-N"行,汇总由仪表盘聚合体现)
-const REQUIRE_COL = { '分时同步数据汇总': '项目组' };
+const REQUIRE_COL = { '【每小时】投放数据监测': '项目组' };
 const SKIP = new Set(['序号', '类别']);
 // 多维表字段显示名重命名(值和来源不变,只改多维表里的列名)。key=多维表名。
 const RENAME = {
   '日经营数据汇总': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
-  '各项目经营概览(每日)': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
-  '各包体经营概览(每日)': { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本' },
+  '【经营日报】-项目维度': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
+  '【经营日报】-包体维度': { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本' },
 };
 const DATE_COLS = new Set(['统计周期', '按天', '更新时间', '日期']);
 // 总表后自动维护的筛选视图:{多维表名: 筛选字段}。数据里该字段的每个值一个视图,
 // 新项目组/新游戏出现时下次同步自动补建(只补缺不删,用户自建视图不受影响)。
 const FILTER_VIEWS = {
-  '各项目经营概览(每日)': '项目组',
-  '各包体经营概览(每日)': '游戏名称',
-  '投放日报-素材维度': '项目组',
+  // sortBy: 视图顺序按近 N 天 valueField 合计降序(消耗最高排最前);无 sortBy 按名称序
+  '【经营日报】-项目维度': { field: '项目组', sortBy: { dateField: '统计周期', valueField: '消耗', days: 7 } },
+  '【经营日报】-包体维度': { field: '游戏名称', sortBy: { dateField: '统计周期', valueField: '消耗', days: 1 } },
+  '【投放日报】-素材维度': { field: '项目组' },
 };
 const isPctCol = h => /ROAS|ROI|率/.test(h);
 
@@ -85,12 +86,25 @@ async function listTables(token) {
   const r = await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables?page_size=100`, token);
   return r.data?.items || [];
 }
-// 确保 values 中每个值都有同名筛选视图(字段=值);只补缺不删。
-async function ensureFilterViews(token, tid, fieldName, values) {
+// 确保 values 中每个值都有同名筛选视图(字段=值)。enforceOrder 时若现有顺序与
+// values 不一致,删掉这些筛选视图按序重建(视图顺序=创建顺序,API 无移动接口)。
+async function ensureFilterViews(token, tid, fieldName, values, enforceOrder) {
   const fields = (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=100`, token)).data?.items || [];
   const fid = fields.find(x => x.field_name === fieldName)?.field_id;
   if (!fid) return;
-  const views = (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/views?page_size=100`, token)).data?.items || [];
+  let views = (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/views?page_size=100`, token)).data?.items || [];
+  if (enforceOrder) {
+    const cur = views.filter(v => values.includes(v.view_name)).map(v => v.view_name);
+    const want = values.filter(v => cur.includes(v));
+    if (JSON.stringify(cur) !== JSON.stringify(want)) {
+      for (const v of views) {
+        if (!values.includes(v.view_name)) continue;
+        await api('DELETE', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/views/${v.view_id}`, token);
+      }
+      views = views.filter(v => !values.includes(v.view_name));
+      console.log(`  ↻ 筛选视图按消耗重排`);
+    }
+  }
   const have = new Set(views.map(v => v.view_name));
   for (const val of values) {
     if (!val || have.has(val)) continue;
@@ -175,13 +189,23 @@ async function syncTable(token, sheet, name, tables) {
     if (w.code === 0) n += Math.min(200, recs.length - i); else { console.log(`  ${name}: 写入失败 ${JSON.stringify(w).slice(0, 80)}`); break; }
   }
   console.log(`  ✅ ${name}: ${header.length}列(去序号) × ${n}行`);
-  // 自动维护按字段值的筛选视图(新组/新游戏出现自动补建)
+  // 自动维护按字段值的筛选视图(新组/新游戏出现自动补建;sortBy 按近N天消耗排序)
   const vf = FILTER_VIEWS[name];
   if (vf) {
-    const vi = header.indexOf(vf);
+    const vi = header.indexOf(vf.field);
     if (vi >= 0) {
-      const vals = [...new Set(data.map(r => r[vi]).filter(v => v))].sort();
-      await ensureFilterViews(token, tid, vf, vals);
+      let vals = [...new Set(data.map(r => r[vi]).filter(v => v))];
+      if (vf.sortBy) {
+        const { dateField, valueField, days } = vf.sortBy;
+        const di = header.indexOf(dateField), xi = header.indexOf(valueField);
+        const serOf = v => { const m = /(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(String(v)); return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5) : null; };
+        const maxSer = Math.max(...data.map(r => serOf(r[di]) || 0));
+        const since = maxSer - (days - 1);
+        const sum = {};
+        data.forEach(r => { const s = serOf(r[di]); if (s != null && s >= since) sum[r[vi]] = (sum[r[vi]] || 0) + pnum(r[xi]); });
+        vals.sort((a, b) => (sum[b] || 0) - (sum[a] || 0));
+      } else vals.sort();
+      await ensureFilterViews(token, tid, vf.field, vals, !!vf.sortBy);
     }
   }
 }
