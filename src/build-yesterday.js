@@ -181,10 +181,10 @@ async function main() {
   // ── 近30天-项目日消耗(驾驶舱多线趋势/占比用,窗口=最新日往前30天) ──
   const since = Y.s - 29;
   const r30T = await ensureTable(token, '近30天-项目日消耗', [
-    { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 },
+    { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 },
   ], tables);
-  const r30 = jk.filter(x => { const s = serAny(x[1]); return s >= since && s <= Y.s && pnum(x[2]) > 0; })
-    .map(x => ({ fields: { '项目组': x[0], '日期': msOf(serAny(x[1])), '消耗': f1(pnum(x[2])) } }));
+  const r30 = jk.filter(x => { const s = serAny(x[1]); return s >= since && s <= Y.s && (pnum(x[2]) > 0 || pnum(x[3]) > 0); })
+    .map(x => ({ fields: { '项目组': x[0], '日期': msOf(serAny(x[1])), '消耗': f1(pnum(x[2])), '收入': f1(pnum(x[3])) } }));
   await writeRecs(token, r30T, r30);
 
   // ── 近30天-出价方式(长格式:日×出价,供占比圆盘) + 近30天-出价日对比(宽格式:供4系列组合图) ──
