@@ -186,7 +186,7 @@ best_end   = best_start + len(best_rows) - 1
 worst_hdr  = best_end + 2
 worst_start = worst_hdr + 1
 worst_end   = worst_start + len(worst_rows) - 1
-clear_to    = worst_end + 5
+clear_to    = max(worst_end + 5, 600)  # 清够深:新数据比旧短时,尾部旧行必须扫掉
 
 # ── Step 3: 清空 ────────────────────────────────────────────────────
 print(f"清空 A1:L{clear_to}...")
