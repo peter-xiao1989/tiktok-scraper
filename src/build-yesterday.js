@@ -79,6 +79,18 @@ async function main() {
       a.sp += sp; a.rn += rn;
     }
   });
+  // 活跃度(kX0M0R 产品维度): B按天0 C项目组1 D游戏2 … H活跃度6 → serial|scope 聚合
+  const actRows = (await readSheet(token, 'kX0M0R!B2:H300')).filter(x => x[0] && x[2]);
+  const actAgg = {};
+  actRows.forEach(x => {
+    const s0 = serAny(x[0]); if (!s0) return;
+    const act = pnum(x[6]);
+    for (const scope of ['@ALL', 'G:' + (x[1] || ''), 'P:' + (x[2] || '')]) actAgg[`${s0}|${scope}`] = (actAgg[`${s0}|${scope}`] || 0) + act;
+  });
+  const actOf = (ser, scope, sp) => {
+    const act = actAgg[`${ser}|${scope}`] || 0;
+    return { '活跃度': act ? Math.round(act) : null, '活跃度平均成本': act && sp ? f2(sp / act) : null };
+  };
   const bidOf = (ser, scope) => {
     const out = {};
     for (const [label, bid] of [['手动', '手动出价'], ['自动', '自动出价']]) {
@@ -101,6 +113,7 @@ async function main() {
     { field_name: '收入状态', type: 1 }, { field_name: '是否昨日', type: 1 },
     { field_name: '手动出价消耗', type: 2 }, { field_name: '手动出价ROI', type: 2 },
     { field_name: '自动出价消耗', type: 2 }, { field_name: '自动出价ROI', type: 2 },
+    { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   // 近 8 天每日一行(日期降序):指标卡 UI 可按"日期"字段开同环比(对比前一天/上周同天),
   // 预算环比列保留兼容现有卡。最新行收入未结算时标注。
@@ -115,7 +128,7 @@ async function main() {
       '收入环比上周同天': w && !pend ? chg(d.rev, w.rev) : null,
       '收入状态': pend ? '待结算(16点后更新)' : '已结算',
       '是否昨日': i === 0 ? '是' : '',
-      ...bidOf(d.s, '@ALL'),
+      ...bidOf(d.s, '@ALL'), ...actOf(d.s, '@ALL', d.sp),
     } };
   });
   await writeRecs(token, ovT, ovRecs);
@@ -129,6 +142,7 @@ async function main() {
     { field_name: '是否昨日', type: 1 },
     { field_name: '手动出价消耗', type: 2 }, { field_name: '手动出价ROI', type: 2 },
     { field_name: '自动出价消耗', type: 2 }, { field_name: '自动出价ROI', type: 2 },
+    { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   const pjRecs = [];
   ws.slice(0, 8).forEach((d, i) => {
@@ -137,7 +151,7 @@ async function main() {
       .sort((a, b) => b[1].sp - a[1].sp)
       .forEach(([g, v]) => pjRecs.push({ fields: { '项目组': g, '日期': msOf(d.s), '消耗': f1(v.sp), '收入': f1(v.rev),
         '广告首日ROI': f2(v.roas), '累计ROI': f2(v.cumROI), '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null,
-        '是否昨日': i === 0 ? '是' : '', ...bidOf(d.s, 'G:' + g) } }));
+        '是否昨日': i === 0 ? '是' : '', ...bidOf(d.s, 'G:' + g), ...actOf(d.s, 'G:' + g, v.sp) } }));
   });
   await writeRecs(token, pjT, pjRecs);
 
@@ -150,6 +164,7 @@ async function main() {
     { field_name: '收入', type: 2 }, { field_name: '消耗环比', type: 2 }, { field_name: '是否昨日', type: 1 },
     { field_name: '手动出价消耗', type: 2 }, { field_name: '手动出价ROI', type: 2 },
     { field_name: '自动出价消耗', type: 2 }, { field_name: '自动出价ROI', type: 2 },
+    { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   const pkRecs = [];
   ws.slice(0, 8).forEach((d, i) => {
@@ -159,7 +174,7 @@ async function main() {
       .forEach(([g, v]) => pkRecs.push({ fields: { '游戏名称': g, '项目组': v.grp, '日期': msOf(d.s), '消耗': f1(v.sp),
         '广告新增': Math.round(v.adNew), '广告新增成本': f1(v.cost), '广告首日ROI': f2(v.roas), '收入': f1(v.rev),
         '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null, '是否昨日': i === 0 ? '是' : '',
-        ...bidOf(d.s, 'P:' + g) } }));
+        ...bidOf(d.s, 'P:' + g), ...actOf(d.s, 'P:' + g, v.sp) } }));
   });
   await writeRecs(token, pkT, pkRecs);
 

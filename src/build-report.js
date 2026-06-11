@@ -257,23 +257,36 @@ async function applyFilter(token, targetRow, showCol) {
 async function ensureReportFormulas(token) {
   const { applyColumnFormats, getGroupMapping, getProductDateInfo, readColsAll,
           writeStaticGrid, clearTrailingCols, dateToSerial, pnum, ppct } = require('./build-summaries');
-  const header = await readHeader(token);
+  let header = await readHeader(token);
+  {
+    const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
+    const clean = header.filter(h => h && !String(h).startsWith('_'));
+    const missing = WANT_BID.filter(n => !clean.includes(n));
+    if (missing.length) {
+      header = [...clean, ...missing];
+      const { feishuReq: fq } = module.exports._deps || {};
+      await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+        { valueRange: { range: `${REPORT_SHEET_ID}!A1:${colLetter(header.length + 4)}1`, values: [[...header, '', '', '', '']] } });
+    }
+  }
   const { groups, groupGames, gameToGroup } = await getGroupMapping(token);
   const gameList = [];
   for (const grp of groups) for (const g of groupGames[grp]) gameList.push(g);
 
-  const adRows   = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 X点击22 Y展示23 AD_gross28
+  const adRows   = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 X点击22 Y展示23 AD_gross28 AT出价44
   const prodRows = await readColsAll(token, 'c50205', 'C', 'AB');  // C游戏0 D日期1 E新增2 F活跃3 K进入8 L时长9 N启速11 O首启12 P启成率13 Y点击率22 Z_eCPM23 AA人均展示24 AB收入25
 
   const ag = {}, byGroup = {};  // ag: game|date→{sp,rn,act}; byGroup: group|date→总消耗
   adRows.forEach(r => {
     const g = r[0], d = r[2]; if (!g || !d) return;
     const e = pnum(r[3]); const k = `${g}|${d}`;
-    const x = ag[k] = ag[k] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, clk: 0, imp: 0 };
+    const x = ag[k] = ag[k] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, clk: 0, imp: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0 };
     const gross = pnum(r[28]), i = pnum(r[7]);
     x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]);
     x.gross += gross; if (i > 0) x.eng += gross / i;
     x.clk += pnum(r[22]); x.imp += pnum(r[23]);
+    if (r[44] === '手动出价') { x.mSp += e; x.mRn += e * ppct(r[4]); }
+    else if (r[44] === '自动出价') { x.aSp += e; x.aRn += e * ppct(r[4]); }
     const grp = gameToGroup[g]; if (grp) byGroup[`${grp}|${d}`] = (byGroup[`${grp}|${d}`] || 0) + e;
   });
   const pm = {};  // game|date → 产品指标行
@@ -286,7 +299,7 @@ async function ensureReportFormulas(token) {
   const r1 = v => Math.round(v * 10) / 10;
   const rowsRaw = [];
   for (const date of dates) for (const game of gameList) {
-    const a = ag[`${game}|${date}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, clk: 0, imp: 0 };
+    const a = ag[`${game}|${date}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, clk: 0, imp: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0 };
     const p = pm[`${game}|${date}`] || null;
     const rev = p ? pnum(p[25]) : 0;
     if (a.sp <= 0 && rev <= 0) continue;  // 双0行不写(等价于旧 filter 隐藏)
@@ -322,6 +335,10 @@ async function ensureReportFormulas(token) {
       case '广告点击率': return p ? ppct(p[22]) : '';
       case '人均广告展示次数': return p ? r1(pnum(p[24])) : '';
       case '广告总收入': return r1(rev);
+      case '手动出价消耗': return a.mSp ? r1(a.mSp) : '';
+      case '手动出价ROI': return a.mSp ? a.mRn / a.mSp : '';
+      case '自动出价消耗': return a.aSp ? r1(a.aSp) : '';
+      case '自动出价ROI': return a.aSp ? a.aRn / a.aSp : '';
       default: return '';
     }
   };

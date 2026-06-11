@@ -367,18 +367,29 @@ async function getGroupMapping(token) {
 // node 算静态值:每行(日期×组),同日组按消耗降序。消耗=投放原表按 game→group 聚合;
 // 收入/新增=产品原表按项目组聚合;累计=组内按日期累加。无公式 → 源表变动不重算。
 async function ensureProjectSummary(token) {
-  const header = await readHeader(token, PROJECT_SHEET_ID);
+  let header = await readHeader(token, PROJECT_SHEET_ID);
+  const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
+  {
+    const missing = WANT_BID.filter(n => !header.includes(n));
+    if (missing.length) {
+      header = [...header.filter(Boolean), ...missing];
+      await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+        { valueRange: { range: `${PROJECT_SHEET_ID}!A1:${colLetter(header.length)}1`, values: [header] } });
+    }
+  }
   const { groups, gameToGroup } = await getGroupMapping(token);
   if (!groups.length) throw new Error('无项目组');
-  const adsRows  = await readColsAll(token, 'uqJEhq', 'B', 'F');   // B游戏0 D日期2 E消耗3 F_ROAS4
+  const adsRows  = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F_ROAS4 AT出价44
   const prodRows = await readColsAll(token, 'c50205', 'B', 'AB');  // B组0 D日期2 E新增3 AB收入26
 
-  const by = {};  // "date|group" -> {sp,rn,rev,nu}
-  const cell = (d, grp) => (by[`${d}|${grp}`] = by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0 });
+  const by = {};  // "date|group" -> {sp,rn,rev,nu,mSp,mRn,aSp,aRn}
+  const cell = (d, grp) => (by[`${d}|${grp}`] = by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0 });
   adsRows.forEach(r => {
     const game = r[0], d = r[2]; if (!game || !d) return;
     const grp = gameToGroup[game]; if (!grp) return;
     const e = pnum(r[3]); const c = cell(d, grp); c.sp += e; c.rn += e * ppct(r[4]);
+    if (r[44] === '手动出价') { c.mSp += e; c.mRn += e * ppct(r[4]); }
+    else if (r[44] === '自动出价') { c.aSp += e; c.aRn += e * ppct(r[4]); }
   });
   prodRows.forEach(r => {
     const grp = r[0], d = r[2]; if (!grp || !d) return;
@@ -397,7 +408,7 @@ async function ensureProjectSummary(token) {
   }
   const rows = [];  // each date × N groups, sorted by 消耗 desc within the day
   dates.forEach(d => {
-    groups.map(grp => ({ grp, date: d, ...(by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0 }), c: cum[`${d}|${grp}`] || { s: 0, r: 0 } }))
+    groups.map(grp => ({ grp, date: d, ...(by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0 }), c: cum[`${d}|${grp}`] || { s: 0, r: 0 } }))
       .sort((a, b) => b.sp - a.sp).forEach(g => rows.push(g));
   });
 
@@ -414,6 +425,10 @@ async function ensureProjectSummary(token) {
       case '项目累计收入': case '累计收入': return r1(row.c.r);
       case '项目累计ROI': case 'TT累计ROI': return row.c.s ? row.c.r / row.c.s : '';
       case '新增用户': return Math.round(row.nu);
+      case '手动出价消耗': return row.mSp ? r1(row.mSp) : '';
+      case '手动出价ROI': return row.mSp ? row.mRn / row.mSp : '';
+      case '自动出价消耗': return row.aSp ? r1(row.aSp) : '';
+      case '自动出价ROI': return row.aSp ? row.aRn / row.aSp : '';
       default: return '';
     }
   };
@@ -460,7 +475,7 @@ async function ensureAdProductSummary(token) {
   let header = await readHeader(token, AD_PRODUCT_SHEET_ID);
   // 表头维护:旧"项目累计*"改名"产品累计*";缺的追加
   const HDR_REN = { '项目累计消耗': '产品累计消耗', '项目累计收入': '产品累计收入', '项目累计ROI': '产品累计ROI' };
-  const WANT = ['产品累计消耗', '产品累计收入', '产品累计ROI', '信号'];
+  const WANT = ['产品累计消耗', '产品累计收入', '产品累计ROI', '信号', '手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
   const renamed = header.map(h => HDR_REN[h] || h);
   const missing = WANT.filter(n => !renamed.includes(n));
   const newHeader = [...renamed.filter(Boolean), ...missing];
@@ -478,18 +493,20 @@ async function ensureAdProductSummary(token) {
     const m = /(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(str);
     return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5) + 25569 : null;
   };
-  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28
+  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28 AT出价44
   const prod = await readColsAll(token, 'c50205', 'C', 'AB'); // C游戏0 D日期1 … AB收入25
   const revMap = {};  // serial|game → 广告总收入(产品表)
   prod.forEach(r => { const s = serAny(r[1]); if (r[0] && s) revMap[`${s}|${r[0]}`] = pnum(r[25]); });
 
-  const by = {};  // "date|game" -> {sp,rn,act,gross,eng}
-  const c = (d, g) => (by[`${d}|${g}`] = by[`${d}|${g}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, game: g, date: d });
+  const by = {};  // "date|game" -> {sp,rn,act,gross,eng,mSp,mRn,aSp,aRn}
+  const c = (d, g) => (by[`${d}|${g}`] = by[`${d}|${g}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0, game: g, date: d });
   ad.forEach(r => {
     const g = r[0], d = r[2]; if (!g || !d) return;
     const e = pnum(r[3]), gross = pnum(r[28]), i = pnum(r[7]);
     const x = c(d, g); x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]); x.gross += gross;
     if (i > 0) x.eng += gross / i;
+    if (r[44] === '手动出价') { x.mSp += e; x.mRn += e * ppct(r[4]); }
+    else if (r[44] === '自动出价') { x.aSp += e; x.aRn += e * ppct(r[4]); }
   });
   // 产品累计:每游戏按日期升序累计 消耗(投放) + 广告总收入(产品表) → serial|game
   const gameCum = {};
@@ -535,6 +552,10 @@ async function ensureAdProductSummary(token) {
         const roi = cum.cr / cum.cs;
         return roi >= 1 ? '🟢已回本' : roi >= 0.7 ? '🟡接近回本' : '🔴回收偏低';
       }
+      case '手动出价消耗': return row.mSp ? r1(row.mSp) : '';
+      case '手动出价ROI': return row.mSp ? row.mRn / row.mSp : '';
+      case '自动出价消耗': return row.aSp ? r1(row.aSp) : '';
+      case '自动出价ROI': return row.aSp ? row.aRn / row.aSp : '';
       default: return '';
     }
   };
@@ -595,17 +616,28 @@ async function getAdMaterialInfo(token) {
 // node 算静态值:按(日期×创意素材)聚合,消耗>0,日期降序+消耗降序。组=素材所属
 // 游戏→组。展示量/点击率/CPM 从投放原表聚合。无公式。
 async function ensureAdMaterialSummary(token) {
-  const header = await readHeader(token, AD_MATERIAL_SHEET_ID);
+  let header = await readHeader(token, AD_MATERIAL_SHEET_ID);
+  {
+    const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
+    const missing = WANT_BID.filter(n => !header.includes(n));
+    if (missing.length) {
+      header = [...header.filter(Boolean), ...missing];
+      await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+        { valueRange: { range: `${AD_MATERIAL_SHEET_ID}!A1:${colLetter(header.length)}1`, values: [header] } });
+    }
+  }
   const { gameToGroup } = await getGroupMapping(token);
   const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
-  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I7 M素材11 X点击22 Y展示23 AD_gross28
+  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I7 M素材11 X点击22 Y展示23 AD_gross28 AT出价44
   const by = {};  // "date|material" -> {...}
-  const c = (d, m, g) => { const k = `${d}|${m}`; const x = by[k] = by[k] || { sp: 0, rn: 0, act: 0, imp: 0, clk: 0, gross: 0, eng: 0, mat: m, date: d, game: '' }; if (g && !x.game) x.game = g; return x; };
+  const c = (d, m, g) => { const k = `${d}|${m}`; const x = by[k] = by[k] || { sp: 0, rn: 0, act: 0, imp: 0, clk: 0, gross: 0, eng: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0, mat: m, date: d, game: '' }; if (g && !x.game) x.game = g; return x; };
   ad.forEach(r => {
     const g = r[0], d = r[2], m = r[11]; if (!m || !d) return;
     const e = pnum(r[3]), gross = pnum(r[28]), i = pnum(r[7]);
     const x = c(d, m, g); x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]); x.imp += pnum(r[23]); x.clk += pnum(r[22]); x.gross += gross;
     if (i > 0) x.eng += gross / i;
+    if (r[44] === '手动出价') { x.mSp += e; x.mRn += e * ppct(r[4]); }
+    else if (r[44] === '自动出价') { x.aSp += e; x.aRn += e * ppct(r[4]); }
   });
   const rows = Object.values(by).filter(x => x.sp > 0)
     .sort((a, b) => (dateToSerial(b.date) - dateToSerial(a.date)) || (b.sp - a.sp));
@@ -624,6 +656,10 @@ async function ensureAdMaterialSummary(token) {
       case '点击率（目标页面）': return row.imp ? row.clk / row.imp : '';
       case '千次展示成本 (CPM)': return row.imp ? r1(row.sp / row.imp * 1000) : '';
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      case '手动出价消耗': return row.mSp ? r1(row.mSp) : '';
+      case '手动出价ROI': return row.mSp ? row.mRn / row.mSp : '';
+      case '自动出价消耗': return row.aSp ? r1(row.aSp) : '';
+      case '自动出价ROI': return row.aSp ? row.aRn / row.aSp : '';
       default: return '';
     }
   };
