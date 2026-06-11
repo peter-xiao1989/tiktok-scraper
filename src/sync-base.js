@@ -62,6 +62,17 @@ async function listTables(token) {
   const r = await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables?page_size=100`, token);
   return r.data?.items || [];
 }
+async function clearRecords(token, tid) {
+  let all = [], pt = '';
+  do {
+    const r = await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token);
+    (r.data?.items || []).forEach(x => all.push(x.record_id)); pt = r.data?.has_more ? r.data.page_token : '';
+  } while (pt);
+  for (let i = 0; i < all.length; i += 500) {
+    await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_delete`, token, { records: all.slice(i, i + 500) });
+  }
+  return all.length;
+}
 
 async function syncTable(token, sheet, name, tables) {
   const grid = await readGrid(token, sheet);
@@ -84,12 +95,16 @@ async function syncTable(token, sheet, name, tables) {
   });
   const fields = header.map((h, k) => ({ field_name: h, type: kind[k] === 'date' ? 5 : (kind[k] === 'num' || kind[k] === 'pct') ? 2 : 1 }));
 
-  // 删同名表重建
+  // 复用同名表(清记录),保持 table_id 稳定 → 仪表盘图表不失效。没有才建。
+  // 注:当前表已是去序号结构(主字段=业务列);若电子表格 header 结构变,需手动删表让其重建。
   const old = tables.find(x => x.name === name);
-  if (old) await api('DELETE', `/open-apis/bitable/v1/apps/${BASE}/tables/${old.table_id}`, token);
-  const cr = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables`, token, { table: { name, fields } });
-  const tid = cr.data?.table_id;
-  if (!tid) { console.log(`  ${name}: 建表失败 ${JSON.stringify(cr).slice(0, 80)}`); return; }
+  let tid;
+  if (old) { tid = old.table_id; await clearRecords(token, tid); }
+  else {
+    const cr = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables`, token, { table: { name, fields } });
+    tid = cr.data?.table_id;
+  }
+  if (!tid) { console.log(`  ${name}: 建/取表失败 ${JSON.stringify(old || '').slice(0, 80)}`); return; }
 
   const recs = data.map(r => {
     const f = {};

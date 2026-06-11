@@ -38,7 +38,8 @@ TikTok realtime ──realtime(每小时*)─────────┘
 
 - 电子表格(两个 token 等效,指同一张表):wiki node `J8mswO2vziyIAAkdt4rcVeaDnog`(node 代码 SPREADSHEET_TOKEN 用这个) / 原生 `K8tgsrOpFhxjy3tgDHscJ5jonHh`(python lark-cli 用这个)
 - sheet id:投放原表 uqJEhq / 产品原表 c50205 / 分时原表 jArZTX / 日经营 wAsSso / 项目维度 JIKPZV / 各产品日报 6B1PVx / 投放日报-产品 kX0M0R / 投放日报-素材 TOBfe9 / 分时素材 dbGqhL / 产品id及链接 juQobR
-- 多维表「TT经营数据中心」:`YB8TbS45kaO1gesMtqlc8kpznEb`。`src/sync-base.js [all|chanpin|toufang|fenshi]` 同步 6 张明细表(去序号/类别列、数值/百分比/日期类型正确、删表重建);`src/build-overview.js` 建「经营概览(每日)」(环比/风险提示/经营概要)。仪表盘搭建方案见 `docs/dashboard-guide.md`(**飞书 API 不能建图表组件,需 UI 手动搭**)。旧 base HCXKb… 弃用。
+- 多维表「TT经营数据中心」:`YB8TbS45kaO1gesMtqlc8kpznEb`。`src/sync-base.js [all|chanpin|toufang|fenshi]` 同步 6 张明细表(去序号/类别列、类型正确、**复用表清记录→table_id 稳定**);`src/build-overview.js` 建「经营概览(每日)」。**3 个仪表盘已用 lark-cli 建好**(经营总览 blkN7iTRJwPqBFga/投放分析/分时看板),改图用 `lark-cli base +dashboard-block-*`(REST API 建不了图表、lark-cli 能),详见 `docs/dashboard-guide.md`。旧 base HCXKb… 弃用。
+- **⚠️ sync-base 必须复用表(清记录),严禁删表重建**——table_id 一变,仪表盘所有图表失效需重建。
 - `sheets_to_base.py` 已被 `src/sync-base.js` 取代(node 版可靠、能去序号、类型正确),保留备查。
 - 游戏选品群:`oc_0d077d9ba6ce793a835b546bd9dbb9e6`
 - 本地验证衍生表:`FEISHU_APP_SECRET=… node -e "…ensureReportFormulas/ensureDailySummary…"`(见 src/build-summaries.js exports)
