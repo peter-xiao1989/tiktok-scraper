@@ -119,10 +119,10 @@ async function main() {
 
   const wFields = [{ field_name: '周', type: 1 }, { field_name: '周一', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 }, { field_name: '营收ROI', type: 2 }, { field_name: '投放ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '消耗环比', type: 1 }, { field_name: '经营点评', type: 1 }];
   const mFields = [{ field_name: '月份', type: 1 }, { field_name: '月初', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 }, { field_name: '营收ROI', type: 2 }, { field_name: '投放ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '消耗环比', type: 1 }, { field_name: '经营点评', type: 1 }];
-  const wTid = await recreate(token, '投资人周报', wFields); await writeRecs(token, wTid, weekRows);
-  const mTid = await recreate(token, '投资人月报', mFields); await writeRecs(token, mTid, monRows);
-  console.log(`✅ 投资人周报 ${weekRows.length} 周 (${wTid})`);
-  console.log(`✅ 投资人月报 ${monRows.length} 月 (${mTid})`);
+  const wTid = await recreate(token, '数据周报', wFields); await writeRecs(token, wTid, weekRows);
+  const mTid = await recreate(token, '数据月报', mFields); await writeRecs(token, mTid, monRows);
+  console.log(`✅ 数据周报 ${weekRows.length} 周 (${wTid})`);
+  console.log(`✅ 数据月报 ${monRows.length} 月 (${mTid})`);
   return { wTid, mTid };
 }
 
