@@ -13,25 +13,28 @@ const BASE = process.env.OVERVIEW_BASE || 'YB8TbS45kaO1gesMtqlc8kpznEb';
 // (sheet_id, 多维表名, 组)
 const SHEETS = [
   ['wAsSso', '日经营数据汇总', 'chanpin'],
-  ['JIKPZV', '项目维度经营表', 'chanpin'],
-  ['6B1PVx', '各产品经营日报表', 'chanpin'],
+  ['JIKPZV', '各项目经营概览(每日)', 'chanpin'],
+  ['6B1PVx', '各包体经营概览(每日)', 'chanpin'],
   ['kX0M0R', '投放日报-产品维度', 'toufang'],
   ['TOBfe9', '投放日报-素材维度', 'toufang'],
   ['dbGqhL', '分时素材效果表', 'fenshi'],
+  ['jdlBTh', '分时同步数据汇总', 'fenshi'],
 ];
+// 该字段为空的行跳过(去掉电子表格里的"汇总-N"行,汇总由仪表盘聚合体现)
+const REQUIRE_COL = { '分时同步数据汇总': '项目组' };
 const SKIP = new Set(['序号', '类别']);
 // 多维表字段显示名重命名(值和来源不变,只改多维表里的列名)。key=多维表名。
 const RENAME = {
   '日经营数据汇总': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
-  '项目维度经营表': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
-  '各产品经营日报表': { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本' },
+  '各项目经营概览(每日)': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
+  '各包体经营概览(每日)': { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本' },
 };
 const DATE_COLS = new Set(['统计周期', '按天', '更新时间', '日期']);
 // 总表后自动维护的筛选视图:{多维表名: 筛选字段}。数据里该字段的每个值一个视图,
 // 新项目组/新游戏出现时下次同步自动补建(只补缺不删,用户自建视图不受影响)。
 const FILTER_VIEWS = {
-  '项目维度经营表': '项目组',
-  '各产品经营日报表': '游戏名称',
+  '各项目经营概览(每日)': '项目组',
+  '各包体经营概览(每日)': '游戏名称',
   '投放日报-素材维度': '项目组',
 };
 const isPctCol = h => /ROAS|ROI|率/.test(h);
@@ -120,7 +123,9 @@ async function syncTable(token, sheet, name, tables) {
       && !/^\d+(\.\d+)?$/.test(x.h) && !/^test\d*$/i.test(x.h));   // 排除纯数字/test 等污染表头
   const rmap = RENAME[name] || {};
   const header = keep.map(x => rmap[x.h] || x.h);   // 字段显示名重命名(值不变)
-  const data = grid.slice(1).map(row => keep.map(x => String(row[x.j] ?? '').trim())).filter(r => r.some(v => v));
+  let data = grid.slice(1).map(row => keep.map(x => String(row[x.j] ?? '').trim())).filter(r => r.some(v => v));
+  const reqCol = REQUIRE_COL[name];
+  if (reqCol) { const ri = header.indexOf(reqCol); if (ri >= 0) data = data.filter(r => r[ri]); }
   if (!data.length) { console.log(`  ${name}: 无数据行,跳过`); return; }
 
   // 列类型: 日期 / 百分比 / 数值 / 文本

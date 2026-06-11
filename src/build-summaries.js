@@ -460,7 +460,7 @@ async function ensureAdProductSummary(token) {
   let header = await readHeader(token, AD_PRODUCT_SHEET_ID);
   // 表头维护:旧"项目累计*"改名"产品累计*";缺的追加
   const HDR_REN = { '项目累计消耗': '产品累计消耗', '项目累计收入': '产品累计收入', '项目累计ROI': '产品累计ROI' };
-  const WANT = ['产品累计消耗', '产品累计收入', '产品累计ROI'];
+  const WANT = ['产品累计消耗', '产品累计收入', '产品累计ROI', '信号'];
   const renamed = header.map(h => HDR_REN[h] || h);
   const missing = WANT.filter(n => !renamed.includes(n));
   const newHeader = [...renamed.filter(Boolean), ...missing];
@@ -530,6 +530,11 @@ async function ensureAdProductSummary(token) {
       case '产品累计消耗': return cum ? r1(cum.cs) : '';
       case '产品累计收入': return cum ? r1(cum.cr) : '';
       case '产品累计ROI': return cum && cum.cs ? cum.cr / cum.cs : '';
+      case '信号': {  // 回本信号:只判有规模的(累计消耗≥50),小额不报噪音
+        if (!cum || cum.cs < 50) return '';
+        const roi = cum.cr / cum.cs;
+        return roi >= 1 ? '🟢已回本' : roi >= 0.7 ? '🟡接近回本' : '🔴回收偏低';
+      }
       default: return '';
     }
   };
