@@ -65,14 +65,17 @@ async function main() {
 
   const logT = await ensureTable(token, T_LOG, [
     { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 }, { field_name: '项目组', type: 1 },
-    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '记录时间', type: 5 },
+    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
+    { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 }, { field_name: '记录时间', type: 5 },
   ], tables);
   const existing = await allRecords(token, logT);
   // 同日同小时已记过(workflow 兜底重复触发)则跳过追加
   const dup = existing.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === '全部');
   if (!dup) {
-    const recs = [{ fields: { '日期': tag, '小时': hour, '项目组': '全部', '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null, '记录时间': Date.now() } }];
-    Object.entries(byGrp).forEach(([g, v]) => recs.push({ fields: { '日期': tag, '小时': hour, '项目组': g, '消耗': Math.round(v.sp * 10) / 10, '广告首日ROI': v.sp ? Math.round(v.rn / v.sp * 100) / 100 : null, '记录时间': Date.now() } }));
+    const recs = [{ fields: { '日期': tag, '小时': hour, '项目组': '全部', '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null,
+      '活跃度': Math.round(totalAct), '活跃度平均成本': totalAct ? Math.round(total / totalAct * 100) / 100 : null, '记录时间': Date.now() } }];
+    Object.entries(byGrp).forEach(([g, v]) => recs.push({ fields: { '日期': tag, '小时': hour, '项目组': g, '消耗': Math.round(v.sp * 10) / 10, '广告首日ROI': v.sp ? Math.round(v.rn / v.sp * 100) / 100 : null,
+      '活跃度': Math.round(v.act), '活跃度平均成本': v.act ? Math.round(v.sp / v.act * 100) / 100 : null, '记录时间': Date.now() } }));
     await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${logT}/records/batch_create`, token, { records: recs });
   }
   // 清理今昨之外的旧记录(表只留两天 → 折线图天然 今天vs昨天 双线)
@@ -84,23 +87,27 @@ async function main() {
   let yHour = yAll.some(x => String(x.fields['小时']) === String(hour)) ? hour
     : Math.max(...yAll.filter(x => x.fields['小时'] <= hour).map(x => x.fields['小时']), -1);
   const yBy = {};  // 项目组 → {sp, roi}(昨日同时段)
-  yAll.filter(x => String(x.fields['小时']) === String(yHour)).forEach(x => { yBy[x.fields['项目组']] = { sp: pnum(x.fields['消耗']), roi: x.fields['广告首日ROI'] ?? null }; });
+  yAll.filter(x => String(x.fields['小时']) === String(yHour)).forEach(x => { yBy[x.fields['项目组']] = { sp: pnum(x.fields['消耗']), roi: x.fields['广告首日ROI'] ?? null, act: x.fields['活跃度'] ?? null, acost: x.fields['活跃度平均成本'] ?? null }; });
   const ySpend = yBy['全部'] ? yBy['全部'].sp : null;
   const cmpT = await ensureTable(token, T_CMP, [
     { field_name: '时点', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 },
-    { field_name: '广告首日ROI', type: 2 }, { field_name: '同时段环比', type: 2 }, { field_name: '记录时间', type: 5 },
+    { field_name: '广告首日ROI', type: 2 }, { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
+    { field_name: '同时段环比', type: 2 }, { field_name: '记录时间', type: 5 },
   ], tables);
   const old = await allRecords(token, cmpT);
   if (old.length) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${cmpT}/records/batch_delete`, token, { records: old.map(x => x.record_id) });
   const cmpRecs = [];
-  const push = (tp, grp, sp, roi, chgV) => cmpRecs.push({ fields: { '时点': tp, '项目组': grp,
+  const push = (tp, grp, sp, roi, act, acost, chgV) => cmpRecs.push({ fields: { '时点': tp, '项目组': grp,
     '消耗': sp == null ? null : Math.round(sp * 10) / 10, '广告首日ROI': roi ?? null,
+    '活跃度': act == null ? null : Math.round(act), '活跃度平均成本': acost ?? null,
     '同时段环比': chgV ?? null, '记录时间': Date.now() } });
   push('① 今日实时', '全部', total, total ? Math.round(totalRn / total * 100) / 100 : null,
+    totalAct, totalAct ? Math.round(total / totalAct * 100) / 100 : null,
     ySpend ? Math.round((total - ySpend) / ySpend * 100) / 100 : null);
   Object.entries(byGrp).forEach(([g, v]) => push('① 今日实时', g, v.sp, v.sp ? Math.round(v.rn / v.sp * 100) / 100 : null,
+    v.act, v.act ? Math.round(v.sp / v.act * 100) / 100 : null,
     yBy[g] && yBy[g].sp ? Math.round((v.sp - yBy[g].sp) / yBy[g].sp * 100) / 100 : null));
-  Object.entries(yBy).forEach(([g, v]) => push('② 昨日同时段', g, v.sp, v.roi, null));
+  Object.entries(yBy).forEach(([g, v]) => push('② 昨日同时段', g, v.sp, v.roi, v.act, v.acost, null));
   await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${cmpT}/records/batch_create`, token, { records: cmpRecs });
   // ── 投放分时明细(48h):每小时追加 jdlBTh 明细(项目×游戏×出价),保留近48小时 ──
   const detT = await ensureTable(token, T_DET, [
