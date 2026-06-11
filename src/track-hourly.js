@@ -75,17 +75,17 @@ async function main() {
   let yMatch = yRows.find(x => x.fields['小时'] === hour);
   if (!yMatch) yMatch = yRows.filter(x => x.fields['小时'] <= hour).sort((a, b) => b.fields['小时'] - a.fields['小时'])[0];
   const ySpend = yMatch ? pnum(yMatch.fields['消耗']) : null;
+  // 长格式(今日/昨日同时段各一行)→ 一张柱图双柱同框对比;环比只在今日行(卡 AVERAGE 取到)
   const cmpT = await ensureTable(token, T_CMP, [
-    { field_name: '记录时间', type: 5 }, { field_name: '当前消耗', type: 2 },
-    { field_name: '昨日同时段消耗', type: 2 }, { field_name: '同时段环比', type: 2 },
+    { field_name: '时点', type: 1 }, { field_name: '消耗', type: 2 },
+    { field_name: '同时段环比', type: 2 }, { field_name: '记录时间', type: 5 },
   ], tables);
   const old = await allRecords(token, cmpT);
   if (old.length) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${cmpT}/records/batch_delete`, token, { records: old.map(x => x.record_id) });
-  await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${cmpT}/records/batch_create`, token, { records: [{ fields: {
-    '记录时间': Date.now(), '当前消耗': Math.round(total * 10) / 10,
-    '昨日同时段消耗': ySpend == null ? null : Math.round(ySpend * 10) / 10,
-    '同时段环比': ySpend ? Math.round((total - ySpend) / ySpend * 100) / 100 : null,
-  } }] });
+  const cmpRecs = [{ fields: { '时点': '① 今日实时', '消耗': Math.round(total * 10) / 10,
+    '同时段环比': ySpend ? Math.round((total - ySpend) / ySpend * 100) / 100 : null, '记录时间': Date.now() } }];
+  if (ySpend != null) cmpRecs.push({ fields: { '时点': '② 昨日同时段', '消耗': Math.round(ySpend * 10) / 10, '记录时间': Date.now() } });
+  await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${cmpT}/records/batch_create`, token, { records: cmpRecs });
   console.log(`✅ 时录 ${tag} ${hour}点 总消耗${Math.round(total * 10) / 10}${ySpend != null ? ` vs 昨日同时段${ySpend}` : '(昨日无记录,明日起有对比)'}`);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
