@@ -133,10 +133,11 @@ async function main() {
     if (only !== 'all' && only !== grp && only !== name) continue;
     await syncTable(token, sheet, name, tables);
   }
-  // 经营概览(每日) + 投资人周报/月报一并刷新
+  // 经营概览(每日) + 投资人周报/月报 + 游戏质量分析 一并刷新
   if (only === 'all' || only === 'chanpin') {
     await require('./build-overview').main();
     await require('./build-investor-report').main();
+    await require('./build-quality-report').main();
   }
   console.log('同步完成。');
 }
