@@ -457,10 +457,32 @@ async function getAdProductInfo(token) {
 // node 算静态值:按(日期×游戏)聚合投放数据,消耗>0,日期降序+同日消耗降序。
 // 人均广告次数 = Σgross / Σengaged(engaged = gross/投放!I 反推)。无公式。
 async function ensureAdProductSummary(token) {
-  const header = await readHeader(token, AD_PRODUCT_SHEET_ID);
+  let header = await readHeader(token, AD_PRODUCT_SHEET_ID);
+  // 表头维护:旧"项目累计*"改名"产品累计*";缺的追加
+  const HDR_REN = { '项目累计消耗': '产品累计消耗', '项目累计收入': '产品累计收入', '项目累计ROI': '产品累计ROI' };
+  const WANT = ['产品累计消耗', '产品累计收入', '产品累计ROI'];
+  const renamed = header.map(h => HDR_REN[h] || h);
+  const missing = WANT.filter(n => !renamed.includes(n));
+  const newHeader = [...renamed.filter(Boolean), ...missing];
+  if (JSON.stringify(newHeader) !== JSON.stringify(header.filter(Boolean))) {
+    header = newHeader;
+    await feishuReq('PUT', `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+      { valueRange: { range: `${AD_PRODUCT_SHEET_ID}!A1:${colLetter(header.length)}1`, values: [header] } });
+  } else header = newHeader;
   const { gameToGroup } = await getGroupMapping(token);
   const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
+  // 宽松日期解析:文本日期(2026-06-10/2026/6/1)或纯数字 serial
+  const serAny = s => {
+    const str = String(s == null ? '' : s).trim();
+    if (/^\d{5}(\.\d+)?$/.test(str)) return Math.round(+str);
+    const m = /(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(str);
+    return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5) + 25569 : null;
+  };
   const ad = await readColsAll(token, 'uqJEhq', 'B', 'AD');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28
+  const prod = await readColsAll(token, 'c50205', 'C', 'AB'); // C游戏0 D日期1 … AB收入25
+  const revMap = {};  // serial|game → 广告总收入(产品表)
+  prod.forEach(r => { const s = serAny(r[1]); if (r[0] && s) revMap[`${s}|${r[0]}`] = pnum(r[25]); });
+
   const by = {};  // "date|game" -> {sp,rn,act,gross,eng}
   const c = (d, g) => (by[`${d}|${g}`] = by[`${d}|${g}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, game: g, date: d });
   ad.forEach(r => {
@@ -469,11 +491,31 @@ async function ensureAdProductSummary(token) {
     const x = c(d, g); x.sp += e; x.rn += e * ppct(r[4]); x.act += pnum(r[5]); x.gross += gross;
     if (i > 0) x.eng += gross / i;
   });
+  // 产品累计:每游戏按日期升序累计 消耗(投放) + 广告总收入(产品表) → serial|game
+  const gameCum = {};
+  {
+    const serials = new Set();
+    const games = new Set();
+    Object.values(by).forEach(x => { const s = serAny(x.date); if (s) { serials.add(s); games.add(x.game); } });
+    Object.keys(revMap).forEach(k => { serials.add(+k.split('|')[0]); games.add(k.split('|').slice(1).join('|')); });
+    const ordered = [...serials].sort((a, b) => a - b);
+    const spBySer = {};  // serial|game → 当日消耗
+    Object.values(by).forEach(x => { const s = serAny(x.date); if (s) spBySer[`${s}|${x.game}`] = x.sp; });
+    for (const g of games) {
+      let cs = 0, cr = 0;
+      for (const s of ordered) {
+        cs += spBySer[`${s}|${g}`] || 0; cr += revMap[`${s}|${g}`] || 0;
+        gameCum[`${s}|${g}`] = { cs, cr };
+      }
+    }
+  }
   const rows = Object.values(by).filter(x => x.sp > 0)
     .sort((a, b) => (dateToSerial(b.date) - dateToSerial(a.date)) || (b.sp - a.sp));
 
   const r1 = v => Math.round(v * 10) / 10;
   const cellOf = (name, row, seq) => {
+    const s = serAny(row.date);
+    const cum = gameCum[`${s}|${row.game}`];
     switch (name) {
       case '序号': return seq;
       case '按天': return dateToSerial(row.date);
@@ -484,6 +526,10 @@ async function ensureAdProductSummary(token) {
       case '活跃度平均成本': return row.act ? r1(row.sp / row.act) : '';
       case '活跃度': return Math.round(row.act);
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      case '广告总收入': return r1(revMap[`${s}|${row.game}`] || 0);
+      case '产品累计消耗': return cum ? r1(cum.cs) : '';
+      case '产品累计收入': return cum ? r1(cum.cr) : '';
+      case '产品累计ROI': return cum && cum.cs ? cum.cr / cum.cs : '';
       default: return '';
     }
   };
