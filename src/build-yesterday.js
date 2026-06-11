@@ -96,31 +96,42 @@ async function main() {
   });
   await writeRecs(token, ovT, ovRecs);
 
-  // ── 项目维度(昨日各组,消耗降序) ── JIKPZV: B组 C日期 D消耗 E收入 F广告首日ROI ... I累计ROI
+  // ── 项目维度(近8天 × 各组,支持指标卡按日期同环比) ── JIKPZV: B组 C日期 D消耗 E收入 F广告首日ROI ... I累计ROI
   const jk = (await readSheet(token, 'JIKPZV!B2:I500')).filter(x => x[0] && serAny(x[1]));
   const grpRow = (ser) => { const m = {}; jk.forEach(x => { if (serAny(x[1]) === ser) m[x[0]] = { sp: pnum(x[2]), rev: pnum(x[3]), roas: ppct(x[4]), cumROI: ppct(x[7]) }; }); return m; };
-  const gy = grpRow(Y.s), gp = P ? grpRow(P.s) : {};
   const pjT = await ensureTable(token, '昨日速览-项目', [
-    { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 },
+    { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 },
     { field_name: '广告首日ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '消耗环比', type: 2 },
+    { field_name: '是否昨日', type: 1 },
   ], tables);
-  const pjRecs = Object.entries(gy).filter(([, v]) => v.sp > 0 || v.rev > 0)
-    .sort((a, b) => b[1].sp - a[1].sp)
-    .map(([g, v]) => ({ fields: { '项目组': g, '消耗': f1(v.sp), '收入': f1(v.rev), '广告首日ROI': f2(v.roas), '累计ROI': f2(v.cumROI), '消耗环比': gp[g] ? chg(v.sp, gp[g].sp) : null } }));
+  const pjRecs = [];
+  ws.slice(0, 8).forEach((d, i) => {
+    const cur = grpRow(d.s), prev = ws[i + 1] ? grpRow(ws[i + 1].s) : {};
+    Object.entries(cur).filter(([, v]) => v.sp > 0 || v.rev > 0)
+      .sort((a, b) => b[1].sp - a[1].sp)
+      .forEach(([g, v]) => pjRecs.push({ fields: { '项目组': g, '日期': msOf(d.s), '消耗': f1(v.sp), '收入': f1(v.rev),
+        '广告首日ROI': f2(v.roas), '累计ROI': f2(v.cumROI), '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null,
+        '是否昨日': i === 0 ? '是' : '' } }));
+  });
   await writeRecs(token, pjT, pjRecs);
 
-  // ── 包体维度(昨日各游戏,消耗降序) ── 6B1PVx: B统计周期1 C项目组2 D游戏3 E消耗4 F_ROAS5 G广告新增6 H新增成本7 K收入10
+  // ── 包体维度(近8天 × 各游戏) ── 6B1PVx: B统计周期1 C项目组2 D游戏3 E消耗4 F_ROAS5 G广告新增6 H新增成本7 K收入10
   const rp = (await readSheet(token, '6B1PVx!A2:V300')).filter(x => x[3] && serAny(x[1]));
   const gameRow = (ser) => { const m = {}; rp.forEach(x => { if (serAny(x[1]) === ser) m[x[3]] = { grp: x[2], sp: pnum(x[4]), roas: ppct(x[5]), adNew: pnum(x[6]), cost: pnum(x[7]), rev: pnum(x[10]) }; }); return m; };
-  const ky = gameRow(Y.s), kp = P ? gameRow(P.s) : {};
   const pkT = await ensureTable(token, '昨日速览-包体', [
-    { field_name: '游戏名称', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 },
+    { field_name: '游戏名称', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '日期', type: 5 }, { field_name: '消耗', type: 2 },
     { field_name: '广告新增', type: 2 }, { field_name: '广告新增成本', type: 2 }, { field_name: '广告首日ROI', type: 2 },
-    { field_name: '收入', type: 2 }, { field_name: '消耗环比', type: 2 },
+    { field_name: '收入', type: 2 }, { field_name: '消耗环比', type: 2 }, { field_name: '是否昨日', type: 1 },
   ], tables);
-  const pkRecs = Object.entries(ky).filter(([, v]) => v.sp > 0)
-    .sort((a, b) => b[1].sp - a[1].sp)
-    .map(([g, v]) => ({ fields: { '游戏名称': g, '项目组': v.grp, '消耗': f1(v.sp), '广告新增': Math.round(v.adNew), '广告新增成本': f1(v.cost), '广告首日ROI': f2(v.roas), '收入': f1(v.rev), '消耗环比': kp[g] ? chg(v.sp, kp[g].sp) : null } }));
+  const pkRecs = [];
+  ws.slice(0, 8).forEach((d, i) => {
+    const cur = gameRow(d.s), prev = ws[i + 1] ? gameRow(ws[i + 1].s) : {};
+    Object.entries(cur).filter(([, v]) => v.sp > 0)
+      .sort((a, b) => b[1].sp - a[1].sp)
+      .forEach(([g, v]) => pkRecs.push({ fields: { '游戏名称': g, '项目组': v.grp, '日期': msOf(d.s), '消耗': f1(v.sp),
+        '广告新增': Math.round(v.adNew), '广告新增成本': f1(v.cost), '广告首日ROI': f2(v.roas), '收入': f1(v.rev),
+        '消耗环比': prev[g] ? chg(v.sp, prev[g].sp) : null, '是否昨日': i === 0 ? '是' : '' } }));
+  });
   await writeRecs(token, pkT, pkRecs);
 
   // ── 近30天-项目日消耗(驾驶舱多线趋势/占比用,窗口=最新日往前30天) ──
