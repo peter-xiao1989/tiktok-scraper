@@ -46,10 +46,18 @@ async function clearRecords(token, tid) {
   do { const r = await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token); (r.data?.items || []).forEach(x => all.push(x.record_id)); pt = r.data?.has_more ? r.data.page_token : ''; } while (pt);
   for (let i = 0; i < all.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_delete`, token, { records: all.slice(i, i + 500) });
 }
-// 复用同名表(清记录),保持 table_id 稳定 → 投资人仪表盘图表不失效。没有才建。
+// 复用同名表(清记录+补缺字段),保持 table_id 稳定 → 仪表盘图表不失效。没有才建。
 async function recreate(token, name, fields) {
   const old = (await listTables(token)).find(x => x.name === name);
-  if (old) { await clearRecords(token, old.table_id); return old.table_id; }
+  if (old) {
+    await clearRecords(token, old.table_id);
+    const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${old.table_id}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
+    for (const f of fields) {
+      if (exist.has(f.field_name)) continue;
+      await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${old.table_id}/fields`, token, { field_name: f.field_name, type: f.type });
+    }
+    return old.table_id;
+  }
   return (await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables`, token, { table: { name, fields } })).data?.table_id;
 }
 async function writeRecs(token, tid, recs) {
@@ -102,23 +110,40 @@ async function main() {
   });
   weekRows.reverse();  // 最新周在上
 
-  // ── 月报 ──
+  // ── 月报(含同进度对比:本月进行到第 N 天 vs 上月前 N 天,公平比较) ──
   const months = {};
   days.forEach(d => { const k = monKey(d.s); (months[k] = months[k] || []).push(d); });
   const mKeys = Object.keys(months).sort();
   const monRows = []; let prevM = null;
-  mKeys.forEach(k => {
+  mKeys.forEach((k, i) => {
     const ds = months[k]; const a = aggregate(ds, days, k, prevM); prevM = a;
     const firstS = Math.min(...ds.map(d => d.s));
+    // 同进度:本月数据已到第 N 天(按日号),取上月 1..N 日的消耗/收入对比
+    const maxDay = Math.max(...ds.map(d => new Date(d.s * 864e5).getUTCDate()));
+    const prevKey = mKeys[i - 1];
+    let mtdSp = null, mtdRev = null, mtdSpChg = null, mtdRevChg = null;
+    if (prevKey) {
+      const prevDs = months[prevKey].filter(d => new Date(d.s * 864e5).getUTCDate() <= maxDay);
+      mtdSp = prevDs.reduce((x, d) => x + d.sp, 0);
+      mtdRev = prevDs.reduce((x, d) => x + d.rev, 0);
+      mtdSpChg = mtdSp ? (a.sp - mtdSp) / mtdSp : null;
+      mtdRevChg = mtdRev ? (a.rev - mtdRev) / mtdRev : null;
+    }
     monRows.push({ fields: {
       '月份': k, '月初': firstS * 864e5,
       '消耗': f1(a.sp), '收入': f1(a.rev), '营收ROI': f2(a.revROI), '投放ROI': f2(a.adW),
-      '累计ROI': f2(a.cumROI), '新增用户': Math.round(a.nu), '消耗环比': pc(a.spChg), '经营点评': a.comment } });
+      '累计ROI': f2(a.cumROI), '新增用户': Math.round(a.nu), '消耗环比': pc(a.spChg),
+      '数据天数': maxDay,
+      '上月同期消耗': mtdSp == null ? null : f1(mtdSp),
+      '上月同期收入': mtdRev == null ? null : f1(mtdRev),
+      '消耗环比(同进度)': mtdSpChg == null ? '-' : pc(mtdSpChg),
+      '收入环比(同进度)': mtdRevChg == null ? '-' : pc(mtdRevChg),
+      '经营点评': a.comment } });
   });
   monRows.reverse();
 
   const wFields = [{ field_name: '周', type: 1 }, { field_name: '周一', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 }, { field_name: '营收ROI', type: 2 }, { field_name: '投放ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '消耗环比', type: 1 }, { field_name: '经营点评', type: 1 }];
-  const mFields = [{ field_name: '月份', type: 1 }, { field_name: '月初', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 }, { field_name: '营收ROI', type: 2 }, { field_name: '投放ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '消耗环比', type: 1 }, { field_name: '经营点评', type: 1 }];
+  const mFields = [{ field_name: '月份', type: 1 }, { field_name: '月初', type: 5 }, { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 }, { field_name: '营收ROI', type: 2 }, { field_name: '投放ROI', type: 2 }, { field_name: '累计ROI', type: 2 }, { field_name: '新增用户', type: 2 }, { field_name: '消耗环比', type: 1 }, { field_name: '数据天数', type: 2 }, { field_name: '上月同期消耗', type: 2 }, { field_name: '上月同期收入', type: 2 }, { field_name: '消耗环比(同进度)', type: 1 }, { field_name: '收入环比(同进度)', type: 1 }, { field_name: '经营点评', type: 1 }];
   const wTid = await recreate(token, '数据周报', wFields); await writeRecs(token, wTid, weekRows);
   const mTid = await recreate(token, '数据月报', mFields); await writeRecs(token, mTid, monRows);
   console.log(`✅ 数据周报 ${weekRows.length} 周 (${wTid})`);

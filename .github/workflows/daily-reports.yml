@@ -61,6 +61,10 @@ jobs:
           npm ci
           node src/sync-base.js "${{ steps.kind.outputs.kind }}"
 
+      - name: Ensure month cards (月初自动滚动指标卡)
+        continue-on-error: true
+        run: node scripts/ensure-month-cards.js
+
       # 发群暂停(等报告样式优化后恢复):删除下方 if 即恢复发送
       - name: Render & send report
         if: ${{ false }}
