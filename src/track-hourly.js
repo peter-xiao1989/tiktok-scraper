@@ -11,6 +11,7 @@ const T_LOG = '实时消耗时录';
 const T_CMP = '实时对比';
 const T_DET = '投放分时明细(48h)';
 const T_TOT = '投放分时总量(48h)';
+const T_PRJ = '投放分时项目明细(48h)';
 
 function once(m, p, t, b) {
   return new Promise((res, rej) => {
@@ -60,7 +61,7 @@ async function main() {
   const ppct = v => { const str = String(v == null ? '' : v); return str.includes('%') ? pnum(str) / 100 : pnum(str); };
   const byGrp = {}; let total = 0, totalRn = 0, totalAct = 0;
   rows.forEach(x => { const sp = pnum(x[3]), rn = sp * ppct(x[4]);
-    const g = byGrp[x[0]] = byGrp[x[0]] || { sp: 0, rn: 0 }; g.sp += sp; g.rn += rn; total += sp; totalRn += rn; totalAct += pnum(x[6]); });
+    const g = byGrp[x[0]] = byGrp[x[0]] || { sp: 0, rn: 0, act: 0 }; g.sp += sp; g.rn += rn; g.act += pnum(x[6]); total += sp; totalRn += rn; totalAct += pnum(x[6]); });
 
   const logT = await ensureTable(token, T_LOG, [
     { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 }, { field_name: '项目组', type: 1 },
@@ -134,8 +135,24 @@ async function main() {
   const totStale = totAll.filter(x => (x.fields['记录时间'] || 0) < cutoff).map(x => x.record_id);
   for (let i = 0; i < totStale.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${totT}/records/batch_delete`, token, { records: totStale.slice(i, i + 500) });
 
+  // ── 投放分时项目明细(48h):每小时 × 每项目组一行(不分游戏/出价) ──
+  const prjT = await ensureTable(token, T_PRJ, [
+    { field_name: '记录时间', type: 5 }, { field_name: '时点', type: 1 }, { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 },
+    { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
+  ], tables);
+  const prjAll = await allRecords(token, prjT);
+  if (!prjAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
+    const prjRecs = Object.entries(byGrp).map(([g, v]) => ({ fields: {
+      '记录时间': Date.now(), '时点': `${tag} ${pad(hour)}时`, '日期': tag, '小时': hour, '项目组': g,
+      '消耗': Math.round(v.sp * 10) / 10, '广告首日ROI': v.sp ? Math.round(v.rn / v.sp * 100) / 100 : null,
+      '活跃度平均成本': v.act ? Math.round(v.sp / v.act * 100) / 100 : null } }));
+    if (prjRecs.length) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${prjT}/records/batch_create`, token, { records: prjRecs });
+  }
+  const prjStale = prjAll.filter(x => (x.fields['记录时间'] || 0) < cutoff).map(x => x.record_id);
+  for (let i = 0; i < prjStale.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${prjT}/records/batch_delete`, token, { records: prjStale.slice(i, i + 500) });
+
   // 固化"记录时间"分钟级格式(表若被重建,字段默认只显示天;幂等,无变化时服务端忽略)
-  for (const tid of [logT, cmpT, detT, totT]) {
+  for (const tid of [logT, cmpT, detT, totT, prjT]) {
     const fs2 = (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=20`, token)).data?.items || [];
     const f2 = fs2.find(x => x.field_name === '记录时间');
     if (f2 && f2.property?.date_formatter !== 'yyyy/MM/dd HH:mm')
