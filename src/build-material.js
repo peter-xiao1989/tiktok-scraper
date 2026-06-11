@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 素材分析(近30天) → 多维表,给投放同学的素材决策表。
 // 核心:自动评级(同项目内对比,跨项目无意义):
+//   🚀机会素材 消耗10~50 且 ROI ≥ max(项目均值×1.5, 30%)——量小但指标异常好,加量信号!
 //   🆕新素材   首投 ≤7 天(先观察,不急着判)
 //   🌟放大复刻 消耗≥50 且 ROI ≥ max(项目均值×1.2, 项目均值+0.1)——验证过的好素材
 //   🔴建议止损 消耗≥30 且 ROI ≤ 项目均值×0.5——费钱不出效果
@@ -83,7 +84,8 @@ async function main() {
     const dayAvg = a.sp / Math.max(a.days.size, 1);
     const newbie = a.first >= maxS - 6;
     let grade;
-    if (newbie) grade = '🆕新素材';
+    if (a.sp >= 10 && a.sp < 50 && roi >= Math.max(pAvg * 1.5, 0.3)) grade = '🚀机会素材';
+    else if (newbie) grade = '🆕新素材';
     else if (a.sp >= 30 && pAvg > 0 && roi <= pAvg * 0.5) grade = '🔴建议止损';
     else if (a.sp >= 50 && roi >= Math.max(pAvg * 1.2, pAvg + 0.1)) grade = '🌟放大复刻';
     else if (a.sp >= 30 && a.last3 / 3 < dayAvg * 0.5) grade = '⚠️衰退';
