@@ -11,7 +11,7 @@ const { getFeishuToken } = require('./build-summaries');
 
 const SS = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const BASE = process.env.OVERVIEW_BASE || 'YB8TbS45kaO1gesMtqlc8kpznEb';
-const TABLE_NAME = '经营概览(每日)';
+const TABLE_NAME = '【每日经营概览】';
 
 function once(method, path, token, body) {
   return new Promise((res, rej) => {
