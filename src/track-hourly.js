@@ -95,6 +95,14 @@ async function main() {
     yBy[g] && yBy[g].sp ? Math.round((v.sp - yBy[g].sp) / yBy[g].sp * 100) / 100 : null));
   Object.entries(yBy).forEach(([g, v]) => push('② 昨日同时段', g, v.sp, v.roi, null));
   await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${cmpT}/records/batch_create`, token, { records: cmpRecs });
+  // 固化"记录时间"分钟级格式(表若被重建,字段默认只显示天;幂等,无变化时服务端忽略)
+  for (const tid of [logT, cmpT]) {
+    const fs2 = (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=20`, token)).data?.items || [];
+    const f2 = fs2.find(x => x.field_name === '记录时间');
+    if (f2 && f2.property?.date_formatter !== 'yyyy/MM/dd HH:mm')
+      await api('PUT', `/open-apis/base/v3/bases/${BASE}/tables/${tid}/fields/${f2.field_id}`, token,
+        { name: '记录时间', type: 'datetime', style: { format: 'yyyy/MM/dd HH:mm' } });
+  }
   console.log(`✅ 时录 ${tag} ${hour}点 总消耗${Math.round(total * 10) / 10}${ySpend != null ? ` vs 昨日同时段${ySpend}` : '(昨日无记录,明日起有对比)'}`);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
