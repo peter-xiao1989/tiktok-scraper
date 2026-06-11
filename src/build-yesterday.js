@@ -211,6 +211,26 @@ async function main() {
   await writeRecs(token, bidLongT, longRecs);
   await writeRecs(token, bidWideT, wideRecs);
 
+  // ── 近30天-包体汇总(每游戏一行:消耗/加权ROI/活跃度/活跃成本) ──
+  const pk30T = await ensureTable(token, '近30天-包体汇总', [
+    { field_name: '游戏名称', type: 1 }, { field_name: '项目组', type: 1 },
+    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
+    { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
+  ], tables);
+  const pk30 = {};
+  actRows.forEach(x => {  // kX0M0R: 按天0 组1 游戏2 消耗3 ROAS4 成本5 活跃度6
+    const s0 = serAny(x[0]); if (!s0 || s0 < bidSince || s0 > Y.s) return;
+    const sp = pnum(x[3]);
+    const a = pk30[x[2]] = pk30[x[2]] || { grp: x[1] || '', sp: 0, rn: 0, act: 0 };
+    a.sp += sp; a.rn += sp * ppct(x[4]); a.act += pnum(x[6]);
+  });
+  const pk30Recs = Object.entries(pk30).filter(([, v]) => v.sp > 0)
+    .sort((a, b) => b[1].sp - a[1].sp)
+    .map(([g, v]) => ({ fields: { '游戏名称': g, '项目组': v.grp, '消耗': f1(v.sp),
+      '广告首日ROI': v.sp ? f2(v.rn / v.sp) : null, '活跃度': Math.round(v.act),
+      '活跃度平均成本': v.act ? f2(v.sp / v.act) : null } }));
+  await writeRecs(token, pk30T, pk30Recs);
+
   console.log(`✅ 昨日速览: 总览${ovRecs.length}行 / 项目${pjRecs.length}行 / 包体${pkRecs.length}行 / 近30天项目${r30.length}行 / 出价${longRecs.length}+${wideRecs.length}行 (${new Date(msOf(Y.s)).toISOString().slice(0, 10)})`);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
