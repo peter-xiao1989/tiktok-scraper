@@ -116,13 +116,13 @@ async function main() {
 
   // ── 投放分时总量(48h):每小时一行,不分项目/游戏 ──
   const totT = await ensureTable(token, T_TOT, [
-    { field_name: '记录时间', type: 5 }, { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 },
+    { field_name: '记录时间', type: 5 }, { field_name: '时点', type: 1 }, { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 },
     { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
   ], tables);
   const totAll = await allRecords(token, totT);
   if (!totAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
     await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${totT}/records/batch_create`, token, { records: [{ fields: {
-      '记录时间': Date.now(), '日期': tag, '小时': hour,
+      '记录时间': Date.now(), '时点': `${tag} ${pad(hour)}时`, '日期': tag, '小时': hour,
       '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null } }] });
   }
   const totStale = totAll.filter(x => (x.fields['记录时间'] || 0) < cutoff).map(x => x.record_id);
