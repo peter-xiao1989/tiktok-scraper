@@ -56,7 +56,7 @@ function buildRecords(wsRows, jkRows) {
   });
   // 日经营: A日期 B消耗 C收入 D当日ROAS E累计消耗 F累计收入 G累计ROI H新增
   const days = wsRows.filter(x => x[0] && ser(x[0]))
-    .map(x => ({ date: x[0], sp: pnum(x[1]), rev: pnum(x[2]), cumROI: ppct(x[6]), nu: pnum(x[7]) }))
+    .map(x => ({ date: x[0], sp: pnum(x[1]), rev: pnum(x[2]), adRoas: ppct(x[3]), cumROI: ppct(x[6]), nu: pnum(x[7]) }))
     .sort((a, b) => ser(b.date) - ser(a.date));
 
   return days.map((d, i) => {
@@ -87,9 +87,10 @@ function buildRecords(wsRows, jkRows) {
     return {
       fields: {
         '日期': ser(d.date) * 864e5,                    // datetime(ms) → 图表按日期轴
-        '总消耗': f1(d.sp),
-        '总收入': f1(d.rev),
-        '当日ROI': pending ? 0 : f2(dayRoi),
+        '消耗': f1(d.sp),
+        '收入': f1(d.rev),
+        '营收ROI': pending ? 0 : f2(dayRoi),            // 当日营收/消耗
+        '投放ROI': f2(d.adRoas),                        // 投放原表 ROAS(消耗加权)
         '累计ROI': f2(d.cumROI),
         '消耗环比': spChg == null ? '-' : pc(spChg),
         '新增用户': Math.round(d.nu),
@@ -104,8 +105,8 @@ function buildRecords(wsRows, jkRows) {
 
 const FIELDS = [
   { field_name: '日期', type: 5 },
-  { field_name: '总消耗', type: 2 }, { field_name: '总收入', type: 2 },
-  { field_name: '当日ROI', type: 2 }, { field_name: '累计ROI', type: 2 },
+  { field_name: '消耗', type: 2 }, { field_name: '收入', type: 2 },
+  { field_name: '营收ROI', type: 2 }, { field_name: '投放ROI', type: 2 }, { field_name: '累计ROI', type: 2 },
   { field_name: '消耗环比', type: 1 }, { field_name: '新增用户', type: 2 },
   { field_name: '在投项目数', type: 2 }, { field_name: '消耗最高', type: 1 },
   { field_name: '风险提示', type: 1 }, { field_name: '经营概要', type: 1 },
