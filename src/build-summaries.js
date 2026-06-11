@@ -237,16 +237,85 @@ async function applyColumnFormats(token, sheetId, header, targetRow) {
   }
 }
 
+// ─── 静态值化通用 helper ────────────────────────────────────────────────────
+// 源表数字是文本; 读取后在 node 里算值、写纯静态值(无公式 → 源表变动不触发重算)。
+const pnum = v => parseFloat(String(v == null ? '' : v).replace(/[,%]/g, '')) || 0;
+const ppct = v => { const s = String(v == null ? '' : v); return s.includes('%') ? pnum(s) / 100 : pnum(s); };
+
+// 读 sheet 从 startCol 到 endCol 的所有数据行(行2起,分批)。
+async function readColsAll(token, sheetId, startCol, endCol) {
+  let out = [], s = 2;
+  while (s < 6000) {
+    const r = await feishuReq('GET',
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetId}!${startCol}${s}:${endCol}${s + 499}`, token);
+    const rows = r.data?.valueRange?.values || [];
+    if (!rows.length) break;
+    out = out.concat(rows);
+    if (rows.length < 500) break;
+    s += 500;
+  }
+  return out;
+}
+
+// 写静态值二维数组,并把多余旧行写空(飞书无 batch_clear; 用 PUT 写空覆盖公式残留)。
+async function writeStaticGrid(token, sheetId, header, grid, clearRows) {
+  const endCol = colLetter(header.length);
+  const BATCH = 200;
+  const put = (startR, chunk) => feishuReq('PUT',
+    `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`, token,
+    { valueRange: { range: `${sheetId}!A${startR}:${endCol}${startR + chunk.length - 1}`, values: chunk } });
+  for (let i = 0; i < grid.length; i += BATCH) {
+    const r = await put(2 + i, grid.slice(i, i + BATCH));
+    if (r.code !== 0) throw new Error(`write static ${2 + i}: ${JSON.stringify(r)}`);
+    process.stdout.write(`\r  wrote ${Math.min(i + BATCH, grid.length)}/${grid.length}`);
+  }
+  // 清空 grid 之后到 clearRows 的旧行(写空字符串覆盖公式)
+  for (let r = 2 + grid.length; r <= clearRows; r += BATCH) {
+    const end = Math.min(r + BATCH - 1, clearRows);
+    const empty = Array.from({ length: end - r + 1 }, () => Array(header.length).fill(''));
+    const res = await put(r, empty);
+    if (res.code !== 0) throw new Error(`blank ${r}: ${JSON.stringify(res)}`);
+  }
+  process.stdout.write('\n');
+}
+
+// 日经营数据汇总 — node 算静态值(按日期聚合),不写公式。
 async function ensureDailySummary(token) {
   const header = await readHeader(token, SUMMARY_SHEET_ID);
-  const { dayCount, maxSerial, minSerial } = await getProductDateInfo(token);
-  const { plan, dateCol, roasCols } = buildPlan(header, maxSerial, minSerial);
-  const targetRow = dayCount + 1 + ROW_BUFFER;
-  console.log(`  日经营数据汇总: ${dayCount} 天 (serial ${minSerial}..${maxSerial}), 填充 2..${targetRow}`);
-  wrapDecimals(plan, header);
-  await writeFormulas(token, SUMMARY_SHEET_ID, targetRow, plan);
-  await applyColumnFormats(token, SUMMARY_SHEET_ID, header, targetRow);
-  return targetRow;
+  const adsRows  = await readColsAll(token, 'uqJEhq', 'D', 'F');   // D日期 E消耗 F ROAS
+  const prodRows = await readColsAll(token, 'c50205', 'D', 'AB');  // D日期 E新增 … AB收入(idx24)
+  const by = {};
+  const g = d => (by[d] = by[d] || { spend: 0, rev: 0, rn: 0, nu: 0 });
+  adsRows.forEach(r => { const d = r[0]; if (!d) return; const e = pnum(r[1]); g(d).spend += e; g(d).rn += e * ppct(r[2]); });
+  prodRows.forEach(r => { const d = r[0]; if (!d) return; g(d).nu += pnum(r[1]); g(d).rev += pnum(r[24]); });
+
+  const dates = Object.keys(by).filter(d => dateToSerial(d)).sort((a, b) => dateToSerial(b) - dateToSerial(a));
+  // 累计:从旧到新累加
+  const cum = {}; let cS = 0, cR = 0;
+  [...dates].reverse().forEach(d => { cS += by[d].spend; cR += by[d].rev; cum[d] = { s: cS, r: cR }; });
+
+  const r1 = v => Math.round(v * 10) / 10;
+  const cellOf = (name, d) => {
+    const x = by[d], c = cum[d];
+    switch (name) {
+      case '统计周期': return dateToSerial(d);
+      case '消耗': return r1(x.spend);
+      case '广告总收入': return r1(x.rev);
+      case '当日广告收入 ROAS (TikTok)':
+      case '广告收入 ROAS (TikTok)': return x.spend ? x.rn / x.spend : '';   // 原值,0.00% 格式显示
+      case '累计消耗': return r1(c.s);
+      case '累计收入': return r1(c.r);
+      case 'TT累计ROI': return c.s ? c.r / c.s : '';
+      case '新增用户': return Math.round(x.nu);
+      default: return '';
+    }
+  };
+  const grid = dates.map(d => header.map(name => (name ? cellOf(name, d) : '')));
+  const clearRows = dates.length + 1 + ROW_BUFFER;
+  console.log(`  日经营数据汇总(静态值): ${dates.length} 天, 写 2..${dates.length + 1}`);
+  await writeStaticGrid(token, SUMMARY_SHEET_ID, header, grid, clearRows);
+  await applyColumnFormats(token, SUMMARY_SHEET_ID, header, dates.length + 1);
+  return dates.length + 1;
 }
 
 // ─── 项目维度经营表 (JIKPZV) ────────────────────────────────────────────────
