@@ -69,7 +69,7 @@ async function main() {
   ], tables);
   const existing = await allRecords(token, logT);
   // 同日同小时已记过(workflow 兜底重复触发)则跳过追加
-  const dup = existing.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour && x.fields['项目组'] === '全部');
+  const dup = existing.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === '全部');
   if (!dup) {
     const recs = [{ fields: { '日期': tag, '小时': hour, '项目组': '全部', '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null, '记录时间': Date.now() } }];
     Object.entries(byGrp).forEach(([g, v]) => recs.push({ fields: { '日期': tag, '小时': hour, '项目组': g, '消耗': Math.round(v.sp * 10) / 10, '广告首日ROI': v.sp ? Math.round(v.rn / v.sp * 100) / 100 : null, '记录时间': Date.now() } }));
@@ -81,10 +81,10 @@ async function main() {
 
   // 同时段对比(时点×项目组 矩阵):昨天同小时(找不到则取昨天 ≤当前小时 最近一批)
   const yAll = existing.filter(x => x.fields['日期'] === ytag);
-  let yHour = yAll.some(x => x.fields['小时'] === hour) ? hour
+  let yHour = yAll.some(x => String(x.fields['小时']) === String(hour)) ? hour
     : Math.max(...yAll.filter(x => x.fields['小时'] <= hour).map(x => x.fields['小时']), -1);
   const yBy = {};  // 项目组 → {sp, roi}(昨日同时段)
-  yAll.filter(x => x.fields['小时'] === yHour).forEach(x => { yBy[x.fields['项目组']] = { sp: pnum(x.fields['消耗']), roi: x.fields['广告首日ROI'] ?? null }; });
+  yAll.filter(x => String(x.fields['小时']) === String(yHour)).forEach(x => { yBy[x.fields['项目组']] = { sp: pnum(x.fields['消耗']), roi: x.fields['广告首日ROI'] ?? null }; });
   const ySpend = yBy['全部'] ? yBy['全部'].sp : null;
   const cmpT = await ensureTable(token, T_CMP, [
     { field_name: '时点', type: 1 }, { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 },
@@ -110,7 +110,7 @@ async function main() {
   ], tables);
   const detAll = await allRecords(token, detT);
   const cutoff = Date.now() - 48 * 3600e3;
-  if (!detAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
+  if (!detAll.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour))) {
     const detRecs = rows.map(x => ({ fields: { '记录时间': Date.now(), '日期': tag, '小时': hour,
       '项目组': x[0], '游戏名称': x[1] || '', '出价方式': x[2] || '',
       '消耗': Math.round(pnum(x[3]) * 10) / 10, '广告首日ROI': Math.round(ppct(x[4]) * 100) / 100,
@@ -126,7 +126,7 @@ async function main() {
     { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   const totAll = await allRecords(token, totT);
-  if (!totAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
+  if (!totAll.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour))) {
     await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${totT}/records/batch_create`, token, { records: [{ fields: {
       '记录时间': Date.now(), '时点': `${tag} ${pad(hour)}时`, '日期': tag, '小时': hour,
       '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null,
@@ -141,7 +141,7 @@ async function main() {
     { field_name: '项目组', type: 1 }, { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   const prjAll = await allRecords(token, prjT);
-  if (!prjAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
+  if (!prjAll.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour))) {
     const prjRecs = Object.entries(byGrp).map(([g, v]) => ({ fields: {
       '记录时间': Date.now(), '时点': `${tag} ${pad(hour)}时`, '日期': tag, '小时': hour, '项目组': g,
       '消耗': Math.round(v.sp * 10) / 10, '广告首日ROI': v.sp ? Math.round(v.rn / v.sp * 100) / 100 : null,
