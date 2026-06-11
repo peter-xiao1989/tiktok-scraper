@@ -17,6 +17,7 @@ const SHEETS = [
   ['6B1PVx', '【经营日报】-包体维度', 'chanpin'],
   ['kX0M0R', '【投放日报】-产品维度', 'toufang'],
   ['TOBfe9', '【投放日报】-素材维度', 'toufang'],
+  ['2zDzau', '【投放日报】-出价维度', 'toufang'],
   ['dbGqhL', '【每小时】素材数据监测', 'fenshi'],
   ['jdlBTh', '【每小时】投放数据监测', 'fenshi'],
 ];
@@ -28,6 +29,7 @@ const RENAME = {
   '日经营数据汇总': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
   '【经营日报】-项目维度': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
   '【经营日报】-包体维度': { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本' },
+  '【投放日报】-出价维度': { '广告收入 ROAS (TikTok)': '广告首日ROI' },
 };
 const DATE_COLS = new Set(['统计周期', '按天', '更新时间', '日期']);
 // 总表后自动维护的筛选视图:{多维表名: 筛选字段}。数据里该字段的每个值一个视图,
@@ -37,6 +39,7 @@ const FILTER_VIEWS = {
   '【经营日报】-项目维度': { field: '项目组', sortBy: { dateField: '统计周期', valueField: '消耗', days: 7 } },
   '【经营日报】-包体维度': { field: '游戏名称', sortBy: { dateField: '统计周期', valueField: '消耗', days: 1 } },
   '【投放日报】-素材维度': { field: '项目组' },
+  '【投放日报】-出价维度': { field: '项目组' },
 };
 const isPctCol = h => /ROAS|ROI|率/.test(h);
 
