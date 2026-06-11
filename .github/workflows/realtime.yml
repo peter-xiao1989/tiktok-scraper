@@ -71,8 +71,9 @@ jobs:
         id: sync
         continue-on-error: true
         env:
-          LARK_AS_BOT: "1"
-        run: python3 sheets_to_base.py fenshi
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: node src/sync-base.js fenshi
 
       # 发群暂停(等报告样式优化后恢复):删除下方 if 即恢复发送
       - name: Render & send 分时报告到选品群

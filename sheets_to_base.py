@@ -81,8 +81,11 @@ def sync_sheet(sid, colmax, tname, cache):
     rows = d["data"]["annotated_csv"].strip().split("\n")
     raw_header = re.sub(r"^\[row=\d+\] ", "", rows[0]).split(",")
     while raw_header and raw_header[-1].strip() == "": raw_header.pop()
-    # 丢弃空列名与下划线开头的辅助列：保留真实业务列
-    keep = [j for j, h in enumerate(raw_header) if h.strip() and not h.strip().startswith("_")]
+    # 丢弃空列名、下划线辅助列、以及"序号/类别"列(多维表不需要,用记录本身)
+    SKIP = {"序号", "类别"}
+    keep = [j for j, h in enumerate(raw_header)
+            if h.strip() and not h.strip().startswith("_")
+            and h.strip() not in SKIP and not re.match(r"序号\d+$", h.strip())]
     header, seen = [], {}
     for j in keep:
         h = raw_header[j].strip()

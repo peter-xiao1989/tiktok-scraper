@@ -53,10 +53,13 @@ jobs:
           echo "kind=$K" >> "$GITHUB_OUTPUT"
           echo "Report kind: $K"
 
-      - name: Sync sheets to Base
+      - name: Sync sheets to Base (node)
         env:
-          LARK_AS_BOT: "1"
-        run: python3 sheets_to_base.py "${{ steps.kind.outputs.kind }}"
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: |
+          npm ci
+          node src/sync-base.js "${{ steps.kind.outputs.kind }}"
 
       # 发群暂停(等报告样式优化后恢复):删除下方 if 即恢复发送
       - name: Render & send report
