@@ -37,7 +37,11 @@ async function allRecords(token, tid) {
 }
 async function ensureTable(token, name, fields, tables) {
   const old = tables.find(x => x.name === name);
-  if (old) return old.table_id;
+  if (old) {
+    const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${old.table_id}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
+    for (const f of fields) if (!exist.has(f.field_name)) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${old.table_id}/fields`, token, { field_name: f.field_name, type: f.type });
+    return old.table_id;
+  }
   return (await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables`, token, { table: { name, fields } })).data?.table_id;
 }
 
@@ -51,12 +55,12 @@ async function main() {
   const ytag = `${pad(yd.getUTCMonth() + 1)}-${pad(yd.getUTCDate())}`;
 
   // 当前分时消耗(jdlBTh 明细行,项目组非空)
-  const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/jdlBTh!C2:G40?valueRenderOption=FormattedValue`, token);
-  const rows = (r.data?.valueRange?.values || []).filter(x => x[0]);  // C项目组 D游戏 E出价 F消耗 G_ROAS
+  const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/jdlBTh!C2:I40?valueRenderOption=FormattedValue`, token);
+  const rows = (r.data?.valueRange?.values || []).filter(x => x[0]);  // C项目组0 D游戏1 E出价2 F消耗3 G_ROAS4 H活跃成本5 I活跃度6
   const ppct = v => { const str = String(v == null ? '' : v); return str.includes('%') ? pnum(str) / 100 : pnum(str); };
-  const byGrp = {}; let total = 0, totalRn = 0;
+  const byGrp = {}; let total = 0, totalRn = 0, totalAct = 0;
   rows.forEach(x => { const sp = pnum(x[3]), rn = sp * ppct(x[4]);
-    const g = byGrp[x[0]] = byGrp[x[0]] || { sp: 0, rn: 0 }; g.sp += sp; g.rn += rn; total += sp; totalRn += rn; });
+    const g = byGrp[x[0]] = byGrp[x[0]] || { sp: 0, rn: 0 }; g.sp += sp; g.rn += rn; total += sp; totalRn += rn; totalAct += pnum(x[6]); });
 
   const logT = await ensureTable(token, T_LOG, [
     { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 }, { field_name: '项目组', type: 1 },
@@ -101,14 +105,15 @@ async function main() {
   const detT = await ensureTable(token, T_DET, [
     { field_name: '记录时间', type: 5 }, { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 },
     { field_name: '项目组', type: 1 }, { field_name: '游戏名称', type: 1 }, { field_name: '出价方式', type: 1 },
-    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
+    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   const detAll = await allRecords(token, detT);
   const cutoff = Date.now() - 48 * 3600e3;
   if (!detAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
     const detRecs = rows.map(x => ({ fields: { '记录时间': Date.now(), '日期': tag, '小时': hour,
       '项目组': x[0], '游戏名称': x[1] || '', '出价方式': x[2] || '',
-      '消耗': Math.round(pnum(x[3]) * 10) / 10, '广告首日ROI': Math.round(ppct(x[4]) * 100) / 100 } }));
+      '消耗': Math.round(pnum(x[3]) * 10) / 10, '广告首日ROI': Math.round(ppct(x[4]) * 100) / 100,
+      '活跃度平均成本': Math.round(pnum(x[5]) * 100) / 100 } }));
     for (let i = 0; i < detRecs.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${detT}/records/batch_create`, token, { records: detRecs.slice(i, i + 200) });
   }
   const detStale = detAll.filter(x => (x.fields['记录时间'] || 0) < cutoff).map(x => x.record_id);
@@ -117,13 +122,14 @@ async function main() {
   // ── 投放分时总量(48h):每小时一行,不分项目/游戏 ──
   const totT = await ensureTable(token, T_TOT, [
     { field_name: '记录时间', type: 5 }, { field_name: '时点', type: 1 }, { field_name: '日期', type: 1 }, { field_name: '小时', type: 2 },
-    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 },
+    { field_name: '消耗', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
   ], tables);
   const totAll = await allRecords(token, totT);
   if (!totAll.some(x => x.fields['日期'] === tag && x.fields['小时'] === hour)) {
     await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${totT}/records/batch_create`, token, { records: [{ fields: {
       '记录时间': Date.now(), '时点': `${tag} ${pad(hour)}时`, '日期': tag, '小时': hour,
-      '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null } }] });
+      '消耗': Math.round(total * 10) / 10, '广告首日ROI': total ? Math.round(totalRn / total * 100) / 100 : null,
+      '活跃度平均成本': totalAct ? Math.round(total / totalAct * 100) / 100 : null } }] });
   }
   const totStale = totAll.filter(x => (x.fields['记录时间'] || 0) < cutoff).map(x => x.record_id);
   for (let i = 0; i < totStale.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${totT}/records/batch_delete`, token, { records: totStale.slice(i, i + 500) });
