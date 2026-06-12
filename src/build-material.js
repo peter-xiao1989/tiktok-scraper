@@ -97,7 +97,7 @@ async function main() {
   const g2g = { ...gameToGroup, ...(EXTRA_GROUP_MAP || {}) };
 
   // 投放原表 B..AT(0-based from B):0游戏 2按天 3消耗 4ROAS 5活跃度 11素材
-  // 21安装V 23点击X 24展示Y 27曝光事件率AC 38d0收入AN 39d6收入AO
+  // 20安装V 22点击X 23展示Y 27曝光事件率AC 38d0收入AN 39d6收入AO
   const rows = await readRows(token, 'uqJEhq', 'B', 'AT');
   const sers = rows.map(x => serAny(x[2])).filter(Boolean);
   if (!sers.length) { console.log('无数据'); return; }
@@ -110,7 +110,7 @@ async function main() {
     const game = x[0] || '';
     const grp = g2g[game] || '其他';
     const sp = pnum(x[3]);
-    const imp = pnum(x[24]), clk = pnum(x[23]), inst = pnum(x[21]);
+    const imp = pnum(x[23]), clk = pnum(x[22]), inst = pnum(x[20]);
     const ev = imp * ppct(x[27]);                      // 6s互动观看数 = 展示×曝光事件率
     const rn = sp * ppct(x[4]);                        // 首日ROI口径收入(与全站一致)
     const k = `${grp}|${mat}`;
