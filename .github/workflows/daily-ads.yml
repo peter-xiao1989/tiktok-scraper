@@ -64,6 +64,7 @@ jobs:
           FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:      ${{ secrets.FEISHU_WEBHOOK }}
+          AUDIT_DAYS: '30'
         run: node src/audit-ads.js
 
       # 导入完成后立即同步多维表(串联保证时序:数据先落地,同步在后)
