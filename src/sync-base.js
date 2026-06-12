@@ -228,6 +228,7 @@ async function main() {
     await require('./build-quality-report').main();
     await require('./build-yesterday').main();
     await require('./build-material').main();
+    await require('./sync-qiangzhan').main();
   }
   // 每小时:分时快照留痕 → 今天 vs 昨天同时段对比
   if (only === 'all' || only === 'fenshi') {
