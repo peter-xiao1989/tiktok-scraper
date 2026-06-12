@@ -372,7 +372,7 @@ async function ensureProjectSummary(token) {
     '广告请求量', '广告曝光量', '广告点击量', '广告点击率', 'eCPM', '人均广告展示次数',
     '总启动次数', '人均进入次数', '每位用户平均时长(分)', '次均游戏时长(分)',
     '平均启动速度(秒)', '平均首次启动速度(秒)', '启动成功率', '授权成功率',
-    '次留', '7日留存', '14日留存', '30日留存', '活跃用户', '活跃度平均成本'];
+    '次留', '7日留存', '14日留存', '30日留存', '活跃用户', '活跃度平均成本', '人均广告次数'];
   {
     const missing = WANT_BID.filter(n => !header.includes(n));
     if (missing.length) {
@@ -387,11 +387,13 @@ async function ensureProjectSummary(token) {
   const prodRows = await readColsAll(token, 'c50205', 'B', 'AB');  // B组0 D日期2 E新增3 AB收入26
 
   const by = {};  // "date|group" -> {sp,rn,rev,nu,mSp,mRn,aSp,aRn}
-  const cell = (d, grp) => (by[`${d}|${grp}`] = by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0, act: 0, adAct: 0, launch: 0, req: 0, expo: 0, clk: 0, entW: 0, durW: 0, sesW: 0, spdW: 0, fspdW: 0, srW: 0, authW: 0, r1W: 0, r7W: 0, r14W: 0, r30W: 0 });
+  const cell = (d, grp) => (by[`${d}|${grp}`] = by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0, act: 0, adAct: 0, gross: 0, eng: 0, launch: 0, req: 0, expo: 0, clk: 0, entW: 0, durW: 0, sesW: 0, spdW: 0, fspdW: 0, srW: 0, authW: 0, r1W: 0, r7W: 0, r14W: 0, r30W: 0 });
   adsRows.forEach(r => {
     const game = r[0], d = r[2]; if (!game || !d) return;
     const grp = gameToGroup[game]; if (!grp) return;
     const e = pnum(r[3]); const c = cell(d, grp); c.sp += e; c.rn += e * ppct(r[4]); c.adAct += pnum(r[5]);
+    const gross = pnum(r[28]), apc = pnum(r[7]);
+    c.gross += gross; if (apc > 0) c.eng += gross / apc;
     if (r[44] === '手动出价') { c.mSp += e; c.mRn += e * ppct(r[4]); }
     else if (r[44] === '自动出价') { c.aSp += e; c.aRn += e * ppct(r[4]); }
   });
@@ -459,6 +461,7 @@ async function ensureProjectSummary(token) {
       case '30日留存': return row.nu ? row.r30W / row.nu : '';
       case '活跃用户': return row.act ? Math.round(row.act) : '';
       case '活跃度平均成本': return row.adAct ? r1(row.sp / row.adAct) : '';
+      case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
       default: return '';
     }
   };
