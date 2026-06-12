@@ -56,6 +56,7 @@ async function main() {
   });
   const fields = keep.map(({ h }, k) => ({ field_name: h, type: kind[k] === 'date' ? 5 : kind[k] === 'text' ? 1 : 2 }));
   fields.push({ field_name: '是否昨日', type: 1 });
+  fields.push({ field_name: '月份', type: 1 });
 
   // ensure 表(复用清写+补字段)
   const tables = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables?page_size=100`, token)).data?.items || [];
@@ -78,6 +79,7 @@ async function main() {
       else f[h] = v;
     });
     f['是否昨日'] = i === 0 ? '是' : '';
+    { const ms = f['统计周期']; if (ms) { const dt = new Date(ms + 288e5); f['月份'] = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`; } }
     return { fields: f };
   });
   for (let i = 0; i < recs.length; i += 200) {
@@ -85,6 +87,44 @@ async function main() {
     if (w.code !== 0) throw new Error('write: ' + JSON.stringify(w).slice(0, 120));
   }
   console.log(`✅ 枪战-经营日报 ${recs.length} 行 (${fields.length}字段, ${tid})`);
+
+  // ── 枪战-包体日报(每日):6B1PVx 枪战行,近30天 ──
+  let g2 = [], s2 = 1;
+  while (s2 < 2000) {
+    const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/6B1PVx!A${s2}:V${s2 + 499}?valueRenderOption=FormattedValue`, token);
+    const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
+    g2 = g2.concat(vs); if (vs.length < 500) break; s2 += 500;
+  }
+  // A序号0 B统计周期1 C项目组2 D游戏3 E消耗4 F_ROAS5 G广告新增6 H新增成本7 K收入10 L新增用户11
+  const pkRows = g2.slice(1).filter(r => String(r[2] || '').trim() === GROUP && serAny(r[1]) && serAny(r[1]) >= since)
+    .sort((a, b) => serAny(b[1]) - serAny(a[1]));
+  const pkFields = [
+    { field_name: '游戏名称', type: 1 }, { field_name: '统计周期', type: 5 }, { field_name: '消耗', type: 2 },
+    { field_name: '收入', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '广告新增', type: 2 },
+    { field_name: '广告新增成本', type: 2 }, { field_name: '新增用户', type: 2 },
+    { field_name: '是否昨日', type: 1 }, { field_name: '月份', type: 1 },
+  ];
+  const tables2 = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables?page_size=100`, token)).data?.items || [];
+  let tid2 = tables2.find(x => x.name === '枪战-包体日报(每日)')?.table_id;
+  if (tid2) {
+    let all = [], pt = '';
+    do { const r = await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token); (r.data?.items || []).forEach(x => all.push(x.record_id)); pt = r.data?.has_more ? r.data.page_token : ''; } while (pt);
+    for (let i = 0; i < all.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_delete`, token, { records: all.slice(i, i + 500) });
+    const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
+    for (const f of pkFields) if (!exist.has(f.field_name)) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields`, token, { field_name: f.field_name, type: f.type });
+  } else tid2 = (await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables`, token, { table: { name: '枪战-包体日报(每日)', fields: pkFields } })).data?.table_id;
+  const ySer = maxSer;
+  const pkRecs2 = pkRows.map(r => {
+    const ser = serAny(r[1]); const ms = (ser - 25569) * 864e5;
+    const dt = new Date(ms + 288e5);
+    return { fields: {
+      '游戏名称': String(r[3] || ''), '统计周期': ms, '消耗': pnum(r[4]), '收入': pnum(r[10]),
+      '广告首日ROI': ppct(r[5]), '广告新增': pnum(r[6]), '广告新增成本': pnum(r[7]), '新增用户': pnum(r[11]),
+      '是否昨日': ser === ySer ? '是' : '', '月份': `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`,
+    } };
+  });
+  for (let i = 0; i < pkRecs2.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_create`, token, { records: pkRecs2.slice(i, i + 200) });
+  console.log(`✅ 枪战-包体日报 ${pkRecs2.length} 行 (${tid2})`);
   return tid;
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
