@@ -43,6 +43,16 @@ jobs:
           TARGET_DATE:         ${{ github.event.inputs.target_date }}
         run: npm run ads-api
 
+      # 导入完成后立即同步多维表(串联保证时序:数据先落地,同步在后)
+      - name: Sync Base (多维表)
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: |
+          node src/sync-base.js toufang
+          node src/sync-base.js chanpin
+
       - name: Notify failure to Feishu
         if: failure()
         env:

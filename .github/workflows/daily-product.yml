@@ -51,6 +51,14 @@ jobs:
           done
           echo "all attempts failed"; exit 1
 
+      # 导入完成后立即同步多维表(产品侧:经营概览/日报等)
+      - name: Sync Base (多维表)
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: node src/sync-base.js chanpin
+
       - name: Upload debug screenshots
         if: failure()
         uses: actions/upload-artifact@v4
