@@ -200,7 +200,7 @@ function classify(name) {
   const n = (name || '').trim();
   if (FMT_DATE_NAMES.has(n)) return 'date';
   if (FMT_TEXT_NAMES.has(n)) return 'text';
-  if (/ROAS|ROI|率/.test(n) || FMT_PCT_NAMES.has(n)) return 'pct';
+  if (/ROAS|ROI|率|次留|留存/.test(n) || FMT_PCT_NAMES.has(n)) return 'pct';
   if (FMT_INT_NAMES.has(n)) return 'int';
   return 'dec';
 }
@@ -368,7 +368,11 @@ async function getGroupMapping(token) {
 // 收入/新增=产品原表按项目组聚合;累计=组内按日期累加。无公式 → 源表变动不重算。
 async function ensureProjectSummary(token) {
   let header = await readHeader(token, PROJECT_SHEET_ID);
-  const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
+  const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI',
+    '广告请求量', '广告曝光量', '广告点击量', '广告点击率', 'eCPM', '人均广告展示次数',
+    '总启动次数', '人均进入次数', '每位用户平均时长(分)', '次均游戏时长(分)',
+    '平均启动速度(秒)', '平均首次启动速度(秒)', '启动成功率', '授权成功率',
+    '次留', '7日留存', '14日留存', '30日留存'];
   {
     const missing = WANT_BID.filter(n => !header.includes(n));
     if (missing.length) {
@@ -383,7 +387,7 @@ async function ensureProjectSummary(token) {
   const prodRows = await readColsAll(token, 'c50205', 'B', 'AB');  // B组0 D日期2 E新增3 AB收入26
 
   const by = {};  // "date|group" -> {sp,rn,rev,nu,mSp,mRn,aSp,aRn}
-  const cell = (d, grp) => (by[`${d}|${grp}`] = by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0 });
+  const cell = (d, grp) => (by[`${d}|${grp}`] = by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0, act: 0, launch: 0, req: 0, expo: 0, clk: 0, entW: 0, durW: 0, sesW: 0, spdW: 0, fspdW: 0, srW: 0, authW: 0, r1W: 0, r7W: 0, r14W: 0, r30W: 0 });
   adsRows.forEach(r => {
     const game = r[0], d = r[2]; if (!game || !d) return;
     const grp = gameToGroup[game]; if (!grp) return;
@@ -394,6 +398,12 @@ async function ensureProjectSummary(token) {
   prodRows.forEach(r => {
     const grp = r[0], d = r[2]; if (!grp || !d) return;
     const c = cell(d, grp); c.rev += pnum(r[26]); c.nu += pnum(r[3]);
+    const act = pnum(r[4]), nu = pnum(r[3]);
+    c.act += act; c.launch += pnum(r[8]); c.req += pnum(r[20]); c.expo += pnum(r[21]); c.clk += pnum(r[22]);
+    c.entW += pnum(r[9]) * act; c.durW += pnum(r[10]) * act; c.sesW += pnum(r[11]) * act;
+    c.spdW += pnum(r[12]) * act; c.fspdW += pnum(r[13]) * act;
+    c.srW += ppct(r[14]) * act; c.authW += ppct(r[15]) * act;
+    c.r1W += ppct(r[16]) * nu; c.r7W += ppct(r[17]) * nu; c.r14W += ppct(r[18]) * nu; c.r30W += ppct(r[19]) * nu;
   });
 
   const dates = [...new Set(Object.keys(by).map(k => k.split('|')[0]))]
@@ -408,7 +418,7 @@ async function ensureProjectSummary(token) {
   }
   const rows = [];  // each date × N groups, sorted by 消耗 desc within the day
   dates.forEach(d => {
-    groups.map(grp => ({ grp, date: d, ...(by[`${d}|${grp}`] || { sp: 0, rn: 0, rev: 0, nu: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0 }), c: cum[`${d}|${grp}`] || { s: 0, r: 0 } }))
+    groups.map(grp => ({ grp, date: d, ...(by[`${d}|${grp}`] || cell('-tmp-', '-tmp-')), c: cum[`${d}|${grp}`] || { s: 0, r: 0 } }))
       .sort((a, b) => b.sp - a.sp).forEach(g => rows.push(g));
   });
 
@@ -429,6 +439,24 @@ async function ensureProjectSummary(token) {
       case '手动出价ROI': return row.mSp ? row.mRn / row.mSp : '';
       case '自动出价消耗': return row.aSp ? r1(row.aSp) : '';
       case '自动出价ROI': return row.aSp ? row.aRn / row.aSp : '';
+      case '广告请求量': return row.req ? Math.round(row.req) : '';
+      case '广告曝光量': return row.expo ? Math.round(row.expo) : '';
+      case '广告点击量': return row.clk ? Math.round(row.clk) : '';
+      case '广告点击率': return row.expo ? row.clk / row.expo : '';
+      case 'eCPM': return row.expo ? r1(row.rev / row.expo * 1000) : '';
+      case '人均广告展示次数': return row.act ? r1(row.expo / row.act) : '';
+      case '总启动次数': return row.launch ? Math.round(row.launch) : '';
+      case '人均进入次数': return row.act ? r1(row.entW / row.act) : '';
+      case '每位用户平均时长(分)': return row.act ? r1(row.durW / row.act) : '';
+      case '次均游戏时长(分)': return row.act ? r1(row.sesW / row.act) : '';
+      case '平均启动速度(秒)': return row.act ? r1(row.spdW / row.act) : '';
+      case '平均首次启动速度(秒)': return row.act ? r1(row.fspdW / row.act) : '';
+      case '启动成功率': return row.act ? row.srW / row.act : '';
+      case '授权成功率': return row.act ? row.authW / row.act : '';
+      case '次留': return row.nu ? row.r1W / row.nu : '';
+      case '7日留存': return row.nu ? row.r7W / row.nu : '';
+      case '14日留存': return row.nu ? row.r14W / row.nu : '';
+      case '30日留存': return row.nu ? row.r30W / row.nu : '';
       default: return '';
     }
   };

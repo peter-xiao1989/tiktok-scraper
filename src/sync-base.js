@@ -41,7 +41,7 @@ const FILTER_VIEWS = {
   '【投放日报】-素材维度': { field: '项目组' },
   '【投放日报】-出价维度': { field: '项目组' },
 };
-const isPctCol = h => /ROAS|ROI|率/.test(h);
+const isPctCol = h => /ROAS|ROI|率|次留|留存/.test(h);
 
 function once(method, path, token, body) {
   return new Promise((res, rej) => {
