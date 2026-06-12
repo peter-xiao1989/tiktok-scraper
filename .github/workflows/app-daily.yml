@@ -1,0 +1,45 @@
+name: APP Daily (GA4, 16:23 BJT)
+
+on:
+  schedule:
+    # GA4 daily data settles within ~24h; full-refresh each run self-heals any gap.
+    - cron: '23 8 * * *'    # 16:23 BJT
+    - cron: '53 8 * * *'    # 16:53 BJT (backup; idempotent full refresh)
+  workflow_dispatch:
+
+concurrency:
+  group: app-daily
+  cancel-in-progress: false
+
+jobs:
+  app-ga4:
+    name: APP线 GA4 → APP经营数据中心
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Fetch GA4 → sync bitable
+        env:
+          GA4_SA_JSON:       ${{ secrets.GA4_SA_JSON }}
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: npm run app-ga4
+
+      - name: Notify failure to Feishu
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          [ -z "$FEISHU_WEBHOOK" ] && echo "no FEISHU_WEBHOOK configured, skip" && exit 0
+          BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 APP线·GA4 数据同步失败 ($BJT BJT)\n$URL\"}}"
