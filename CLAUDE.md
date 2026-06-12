@@ -44,3 +44,9 @@ TikTok realtime ──realtime(每小时*)─────────┘
 - 游戏选品群:`oc_0d077d9ba6ce793a835b546bd9dbb9e6`
 - 本地验证衍生表:`FEISHU_APP_SECRET=… node -e "…ensureReportFormulas/ensureDailySummary…"`(见 src/build-summaries.js exports)
 - 外部准点调度:见 `scheduler/README.md`
+
+## 两条产品线(严格隔离)
+
+- **Minis 线**(现有): TikTok 小游戏,数据源 TikTok Marketing API/Developer Portal,落地 TT电子表格 + TT经营数据中心(YB8TbS)+ 单项目 base。
+- **APP 线**(建设中): GP/AS 双端 app,数据源 Firebase(GA4)/AppsFlyer/广告聚合平台,代码在 `src/apps/`,落地**独立**电子表格与多维表(规划「APP经营数据中心」)。见 `src/apps/README.md`。
+- **红线**: 两线数据永不写入对方的表;表名/脚本/workflow/告警全部带线别前缀。口径差异(留存/收入定义 Firebase≠TikTok Portal)在使用时必须标注,不做跨线直接对比。
