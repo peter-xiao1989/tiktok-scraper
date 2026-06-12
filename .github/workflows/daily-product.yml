@@ -41,8 +41,11 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
           TARGET_DATE:       ${{ github.event.inputs.target_date }}
-          DAYS: '1'
         run: |
+          # 留存指标 T+N 才回填:平日回看3天(覆盖次留),周日回看31天(覆盖7/14/30留)
+          DAYS=3; [ "$(date -u +%u)" = "7" ] && DAYS=31
+          export DAYS
+          echo "DAYS=$DAYS"
           for i in 1 2 3; do
             echo "=== product-api attempt $i ==="
             if npm run product-api; then exit 0; fi
