@@ -50,17 +50,22 @@ async function main() {
   // 账户列表(与 ads-api 同源:oauth + bc)
   const ids = new Set();
   try {
-    const qs = new URLSearchParams({ app_id: process.env.TIKTOK_APP_ID, secret: process.env.TIKTOK_APP_SECRET }).toString();
+    const qs = new URLSearchParams({ app_id: process.env.TIKTOK_APP_ID, secret: process.env.TIKTOK_APP_SECRET, access_token: ACCESS_TOKEN }).toString();
     const r = await tiktok(`/open_api/v1.3/oauth2/advertiser/get/?${qs}`);
+    if (r.code !== 0) console.warn('[warn] oauth list:', r.message);
     (r.data?.list || []).forEach(a => ids.add(String(a.advertiser_id)));
   } catch (e) { console.warn('[warn] oauth list:', e.message); }
+  // BC 资产枚举:抓"在 BC 里但 oauth 没授权"的账户(bc/advertiser/list 是不存在的路径,404)
   if (process.env.TIKTOK_BC_ID) {
-    for (let page = 1; page < 10; page++) {
-      const qs = new URLSearchParams({ bc_id: process.env.TIKTOK_BC_ID, page, page_size: 100 }).toString();
-      const r = await tiktok(`/open_api/v1.3/bc/advertiser/list/?${qs}`);
-      const list = r.data?.list || []; list.forEach(a => ids.add(String(a.advertiser_id)));
-      if (list.length < 100) break;
-    }
+    try {
+      for (let page = 1; page < 10; page++) {
+        const qs = new URLSearchParams({ bc_id: process.env.TIKTOK_BC_ID, asset_type: 'ADVERTISER', page, page_size: 50 }).toString();
+        const r = await tiktok(`/open_api/v1.3/bc/asset/get/?${qs}`);
+        if (r.code !== 0) { console.warn('[warn] bc/asset/get:', r.message); break; }
+        const list = r.data?.list || []; list.forEach(a => ids.add(String(a.asset_id || a.advertiser_id)));
+        if (!r.data?.page_info?.has_more && list.length < 50) break;
+      }
+    } catch (e) { console.warn('[warn] bc/asset/get:', e.message); }
   }
   const advIds = [...ids];
   console.log(`advertisers: ${advIds.length}`);

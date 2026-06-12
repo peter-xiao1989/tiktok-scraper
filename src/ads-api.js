@@ -102,10 +102,11 @@ async function getAdvertisers(accessToken) {
     const ids = [];
     let page = 1;
     while (true) {
-      const qs = new URLSearchParams({ bc_id: bcId, page, page_size: 100 }).toString();
-      const r = await tiktokGet(`/open_api/v1.3/bc/advertiser/list/?${qs}`, accessToken);
+      // bc/asset/get is the real v1.3 endpoint (bc/advertiser/list 404s — this fallback was never exercised)
+      const qs = new URLSearchParams({ bc_id: bcId, asset_type: 'ADVERTISER', page, page_size: 50 }).toString();
+      const r = await tiktokGet(`/open_api/v1.3/bc/asset/get/?${qs}`, accessToken);
       if (r.code !== 0) throw new Error(`${r.code} ${r.message}`);
-      ids.push(...(r.data?.list || []).map(a => String(a.advertiser_id)));
+      ids.push(...(r.data?.list || []).map(a => String(a.asset_id || a.advertiser_id)));
       if (!r.data?.page_info?.has_more) break;
       page++;
     }
