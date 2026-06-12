@@ -259,7 +259,8 @@ async function ensureReportFormulas(token) {
           writeStaticGrid, clearTrailingCols, dateToSerial, pnum, ppct } = require('./build-summaries');
   let header = await readHeader(token);
   {
-    const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
+    const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI',
+      '总启动次数', '次均游戏时长(分)', '授权成功率', '次留', '7日留存', '14日留存', '30日留存'];
     const clean = header.filter(h => h && !String(h).startsWith('_'));
     const missing = WANT_BID.filter(n => !clean.includes(n));
     if (missing.length) {
@@ -335,6 +336,13 @@ async function ensureReportFormulas(token) {
       case '广告点击率': return p ? ppct(p[22]) : '';
       case '人均广告展示次数': return p ? r1(pnum(p[24])) : '';
       case '广告总收入': return r1(rev);
+      case '总启动次数': return p ? Math.round(pnum(p[7])) : '';
+      case '次均游戏时长(分)': return p ? r1(pnum(p[10])) : '';
+      case '授权成功率': return p ? ppct(p[14]) : '';
+      case '次留': return p ? ppct(p[15]) : '';
+      case '7日留存': return p ? ppct(p[16]) : '';
+      case '14日留存': return p ? ppct(p[17]) : '';
+      case '30日留存': return p ? ppct(p[18]) : '';
       case '手动出价消耗': return a.mSp ? r1(a.mSp) : '';
       case '手动出价ROI': return a.mSp ? a.mRn / a.mSp : '';
       case '自动出价消耗': return a.aSp ? r1(a.aSp) : '';

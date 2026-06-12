@@ -98,15 +98,19 @@ async function syncProject(token, GROUP, QZ) {
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
     g2 = g2.concat(vs); if (vs.length < 500) break; s2 += 500;
   }
-  // A序号0 B统计周期1 C项目组2 D游戏3 E消耗4 F_ROAS5 G广告新增6 H新增成本7 K收入10 L新增用户11
+  // 全列复制 6B1PVx(header 驱动,改名与主表一致,去序号/出价/项目组)
+  const pkRawHeader = g2[0].map(v => String(v || '').trim());
+  const PK_RENAME = { '广告收入 ROAS (TikTok)': '广告首日ROI', '活跃度': '广告新增', '活跃度平均成本': '广告新增成本', '广告总收入': '收入' };
+  const PK_SKIP = new Set(['序号', '项目组', '手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI']);
+  const pkKeep = pkRawHeader.map((h, j) => ({ h: PK_RENAME[h] || h, j }))
+    .filter(x => x.h && !x.h.startsWith('_') && !PK_SKIP.has(pkRawHeader[x.j]));
   const pkRows = g2.slice(1).filter(r => String(r[2] || '').trim() === GROUP && serAny(r[1]) && serAny(r[1]) >= since)
     .sort((a, b) => serAny(b[1]) - serAny(a[1]));
-  const pkFields = [
-    { field_name: '游戏名称', type: 1 }, { field_name: '统计周期', type: 5 }, { field_name: '消耗', type: 2 },
-    { field_name: '收入', type: 2 }, { field_name: '广告首日ROI', type: 2 }, { field_name: '广告新增', type: 2 },
-    { field_name: '广告新增成本', type: 2 }, { field_name: '新增用户', type: 2 },
-    { field_name: '是否昨日', type: 1 }, { field_name: '月份', type: 1 },
-  ];
+  const pkIsPct = h => /ROAS|ROI|率|次留|留存/.test(h);
+  const pkKind = pkKeep.map(({ h }) => h === '统计周期' ? 'date' : h === '游戏名称' ? 'text' : pkIsPct(h) ? 'pct' : 'num');
+  const pkFields = pkKeep.map(({ h }, k) => ({ field_name: h, type: pkKind[k] === 'date' ? 5 : pkKind[k] === 'text' ? 1 : 2 }));
+  pkFields.push({ field_name: '是否昨日', type: 1 });
+  pkFields.push({ field_name: '月份', type: 1 });
   const tables2 = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables?page_size=100`, token)).data?.items || [];
   let tid2 = tables2.find(x => x.name === `${GROUP}-包体日报(每日)`)?.table_id;
   if (tid2) {
@@ -120,11 +124,17 @@ async function syncProject(token, GROUP, QZ) {
   const pkRecs2 = pkRows.map(r => {
     const ser = serAny(r[1]); const ms = (ser - 25569) * 864e5;
     const dt = new Date(ms + 288e5);
-    return { fields: {
-      '游戏名称': String(r[3] || ''), '统计周期': ms, '消耗': pnum(r[4]), '收入': pnum(r[10]),
-      '广告首日ROI': ppct(r[5]), '广告新增': pnum(r[6]), '广告新增成本': pnum(r[7]), '新增用户': pnum(r[11]),
-      '是否昨日': ser === ySer ? '是' : '', '月份': `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`,
-    } };
+    const f = {};
+    pkKeep.forEach(({ h, j }, k) => {
+      const v = String(r[j] ?? '').trim(); if (v === '') return;
+      if (pkKind[k] === 'date') f[h] = ms;
+      else if (pkKind[k] === 'pct') f[h] = ppct(v);
+      else if (pkKind[k] === 'num') f[h] = pnum(v);
+      else f[h] = v;
+    });
+    f['是否昨日'] = ser === ySer ? '是' : '';
+    f['月份'] = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+    return { fields: f };
   });
   for (let i = 0; i < pkRecs2.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_create`, token, { records: pkRecs2.slice(i, i + 200) });
   console.log(`✅ ${GROUP}-包体日报 ${pkRecs2.length} 行 (${tid2})`);
