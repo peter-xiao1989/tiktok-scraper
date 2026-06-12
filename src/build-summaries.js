@@ -372,7 +372,7 @@ async function ensureProjectSummary(token) {
     '广告请求量', '广告曝光量', '广告点击量', '广告点击率', 'eCPM', '人均广告展示次数',
     '总启动次数', '人均进入次数', '每位用户平均时长(分)', '次均游戏时长(分)',
     '平均启动速度(秒)', '平均首次启动速度(秒)', '启动成功率', '授权成功率',
-    '次留', '7日留存', '14日留存', '30日留存', '活跃用户', '活跃度平均成本', '人均广告次数'];
+    '次留', '7日留存', '14日留存', '30日留存', '活跃用户', '活跃度平均成本', '人均广告次数', '项目累计新增用户', '历史平均活跃成本'];
   {
     const missing = WANT_BID.filter(n => !header.includes(n));
     if (missing.length) {
@@ -412,10 +412,11 @@ async function ensureProjectSummary(token) {
     .filter(d => dateToSerial(d)).sort((a, b) => dateToSerial(b) - dateToSerial(a));
   const cum = {};  // cumulative per group over dates (ascending)
   for (const grp of groups) {
-    let cS = 0, cR = 0;
+    let cS = 0, cR = 0, cN = 0, cA = 0;
     [...dates].reverse().forEach(d => {
-      const x = by[`${d}|${grp}`] || { sp: 0, rev: 0 };
-      cS += x.sp; cR += x.rev; cum[`${d}|${grp}`] = { s: cS, r: cR };
+      const x = by[`${d}|${grp}`] || { sp: 0, rev: 0, nu: 0, adAct: 0 };
+      cS += x.sp; cR += x.rev; cN += x.nu || 0; cA += x.adAct || 0;
+      cum[`${d}|${grp}`] = { s: cS, r: cR, n: cN, a: cA };
     });
   }
   const rows = [];  // each date × N groups, sorted by 消耗 desc within the day
@@ -462,6 +463,8 @@ async function ensureProjectSummary(token) {
       case '活跃用户': return row.act ? Math.round(row.act) : '';
       case '活跃度平均成本': return row.adAct ? r1(row.sp / row.adAct) : '';
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      case '项目累计新增用户': return row.c && row.c.n ? Math.round(row.c.n) : '';
+      case '历史平均活跃成本': return row.c && row.c.a ? r1(row.c.s / row.c.a) : '';
       default: return '';
     }
   };
@@ -765,6 +768,8 @@ async function ensureAdBidSummary(token) {
       case '活跃度平均成本': return row.act ? r1(row.sp / row.act) : '';
       case '活跃度': return Math.round(row.act);
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
+      case '项目累计新增用户': return row.c && row.c.n ? Math.round(row.c.n) : '';
+      case '历史平均活跃成本': return row.c && row.c.a ? r1(row.c.s / row.c.a) : '';
       default: return '';
     }
   };
