@@ -8,8 +8,8 @@ const SS = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 // 单项目数据同步配置:每项目独立 base(或共用 base 分表),表名前缀=项目名
 const PROJECTS = [
   { group: '枪战', base: 'X89dbn5DZaYhMqsjcE1cZv3snD4' },
-  { group: '齿轮', base: 'WE2TbdhjOaD7ssszrXbcmiK6nLg' },
-  { group: '战车', base: 'WE2TbdhjOaD7ssszrXbcmiK6nLg' },
+  { group: '齿轮', base: 'WzfObSESya7fo0sKO9Hc8zernBh' },
+  { group: '战车', base: 'WzfObSESya7fo0sKO9Hc8zernBh' },
 ];
 const SKIP_COLS = new Set(['序号', '手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI']);
 const RENAME = { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' };
