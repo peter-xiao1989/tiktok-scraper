@@ -5,9 +5,12 @@ const https = require('https');
 const { getFeishuToken } = require('./build-summaries');
 
 const SS = 'J8mswO2vziyIAAkdt4rcVeaDnog';
-const QZ = 'X89dbn5DZaYhMqsjcE1cZv3snD4';
-const TABLE = '枪战-经营日报(每日)';
-const GROUP = '枪战';
+// 单项目数据同步配置:每项目独立 base(或共用 base 分表),表名前缀=项目名
+const PROJECTS = [
+  { group: '枪战', base: 'X89dbn5DZaYhMqsjcE1cZv3snD4' },
+  { group: '齿轮', base: 'WE2TbdhjOaD7ssszrXbcmiK6nLg' },
+  { group: '战车', base: 'WE2TbdhjOaD7ssszrXbcmiK6nLg' },
+];
 const SKIP_COLS = new Set(['序号', '手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI']);
 const RENAME = { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' };
 
@@ -29,8 +32,8 @@ const pnum = v => parseFloat(String(v == null ? '' : v).replace(/[,%]/g, '')) ||
 const ppct = v => { const s = String(v == null ? '' : v); return s.includes('%') ? pnum(s) / 100 : pnum(s); };
 const serAny = s => { const str = String(s == null ? '' : s).trim(); if (/^\d{5}(\.\d+)?$/.test(str)) return Math.round(+str); const m = /(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(str); return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5) + 25569 : null; };
 
-async function main() {
-  const token = await getFeishuToken();
+async function syncProject(token, GROUP, QZ) {
+  const TABLE = `${GROUP}-经营日报(每日)`;
   // 读 JIKPZV 全表(FormattedValue)
   let grid = [], s = 1;
   while (s < 2000) {
@@ -86,7 +89,7 @@ async function main() {
     const w = await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
     if (w.code !== 0) throw new Error('write: ' + JSON.stringify(w).slice(0, 120));
   }
-  console.log(`✅ 枪战-经营日报 ${recs.length} 行 (${fields.length}字段, ${tid})`);
+  console.log(`✅ ${GROUP}-经营日报 ${recs.length} 行 (${fields.length}字段, ${tid})`);
 
   // ── 枪战-包体日报(每日):6B1PVx 枪战行,近30天 ──
   let g2 = [], s2 = 1;
@@ -105,14 +108,14 @@ async function main() {
     { field_name: '是否昨日', type: 1 }, { field_name: '月份', type: 1 },
   ];
   const tables2 = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables?page_size=100`, token)).data?.items || [];
-  let tid2 = tables2.find(x => x.name === '枪战-包体日报(每日)')?.table_id;
+  let tid2 = tables2.find(x => x.name === `${GROUP}-包体日报(每日)`)?.table_id;
   if (tid2) {
     let all = [], pt = '';
     do { const r = await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token); (r.data?.items || []).forEach(x => all.push(x.record_id)); pt = r.data?.has_more ? r.data.page_token : ''; } while (pt);
     for (let i = 0; i < all.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_delete`, token, { records: all.slice(i, i + 500) });
     const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
     for (const f of pkFields) if (!exist.has(f.field_name)) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields`, token, { field_name: f.field_name, type: f.type });
-  } else tid2 = (await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables`, token, { table: { name: '枪战-包体日报(每日)', fields: pkFields } })).data?.table_id;
+  } else tid2 = (await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables`, token, { table: { name: `${GROUP}-包体日报(每日)`, fields: pkFields } })).data?.table_id;
   const ySer = maxSer;
   const pkRecs2 = pkRows.map(r => {
     const ser = serAny(r[1]); const ms = (ser - 25569) * 864e5;
@@ -124,8 +127,12 @@ async function main() {
     } };
   });
   for (let i = 0; i < pkRecs2.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_create`, token, { records: pkRecs2.slice(i, i + 200) });
-  console.log(`✅ 枪战-包体日报 ${pkRecs2.length} 行 (${tid2})`);
+  console.log(`✅ ${GROUP}-包体日报 ${pkRecs2.length} 行 (${tid2})`);
   return tid;
+}
+async function main() {
+  const token = await getFeishuToken();
+  for (const { group, base } of PROJECTS) await syncProject(token, group, base);
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
 module.exports = { main };
