@@ -41,7 +41,30 @@ jobs:
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:      ${{ secrets.FEISHU_WEBHOOK }}
           TARGET_DATE:         ${{ github.event.inputs.target_date }}
-        run: npm run ads-api
+        run: |
+          # 永久自愈:无手动指定日期时,平日回看7天、周日回看30天。
+          # dedup 在请求前跳过已导入的账户日 → 只有缺失的才真正拉取(成本≈0),
+          # run 失败/账户晚授权/新账户历史 都会被后续天数自动补回。
+          if [ -z "$TARGET_DATE" ]; then
+            DAYS_BACK=7; [ "$(date -u +%u)" = "7" ] && DAYS_BACK=30
+            export START_DATE=$(date -u -d "-$DAYS_BACK days" +%F)
+            export END_DATE=$(date -u -d "-1 day" +%F)
+            echo "self-heal window: $START_DATE ~ $END_DATE"
+          fi
+          npm run ads-api
+
+      # 对账:API 账户级总量 vs 表内合计,差异>$1 飞书告警(自愈补不回的当天发现)
+      - name: Audit (对账核数)
+        continue-on-error: true
+        env:
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          TIKTOK_APP_ID:       ${{ secrets.TIKTOK_APP_ID }}
+          TIKTOK_APP_SECRET:   ${{ secrets.TIKTOK_APP_SECRET }}
+          TIKTOK_BC_ID:        ${{ secrets.TIKTOK_BC_ID }}
+          FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_WEBHOOK:      ${{ secrets.FEISHU_WEBHOOK }}
+        run: node src/audit-ads.js
 
       # 导入完成后立即同步多维表(串联保证时序:数据先落地,同步在后)
       - name: Sync Base (多维表)
