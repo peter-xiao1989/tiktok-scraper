@@ -121,14 +121,18 @@ async function main() {
     sheetSpend[k] = (sheetSpend[k] || 0) + sp;
   });
 
-  // 对比
-  const diffs = [];
+  // 对比。ad级报表合计与账户级总量存在固有小额口径差(费用调整/归因差),
+  // 重拉不可消除 → 仅"显著差异"(>$20 或 >15%)才修复+告警,小差只记日志。
+  const diffs = [], minor = [];
   for (const [k, v] of Object.entries(apiSpend)) {
     const sv = sheetSpend[k] || 0;
-    if (Math.abs(v - sv) > THRESHOLD) diffs.push({ k, api: v, sheet: sv });
+    const d = Math.abs(v - sv);
+    if (d <= THRESHOLD) continue;
+    (d > 20 || d > v * 0.15 ? diffs : minor).push({ k, api: v, sheet: sv });
   }
   diffs.sort((a, b) => Math.abs(b.api - b.sheet) - Math.abs(a.api - a.sheet));
-  if (!diffs.length) { console.log(`✅ 对账通过(${start}~${end},阈值$${THRESHOLD})`); return; }
+  if (minor.length) console.log(`ℹ️ 口径噪音 ${minor.length} 条(≤$20且≤15%,不处理):` + minor.map(d => ` ${d.k} $${(d.api - d.sheet).toFixed(1)}`).join(';'));
+  if (!diffs.length) { console.log(`✅ 对账通过(${start}~${end},阈值$${THRESHOLD},显著差异0条)`); return; }
 
   console.log(`⚠️ 对账差异 ${diffs.length} 条:`);
   diffs.forEach(d => console.log(`  ${d.k}: API $${d.api.toFixed(2)} vs 表 $${d.sheet.toFixed(2)}`));
