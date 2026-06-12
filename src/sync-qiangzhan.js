@@ -128,6 +128,34 @@ async function syncProject(token, GROUP, QZ) {
   });
   for (let i = 0; i < pkRecs2.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_create`, token, { records: pkRecs2.slice(i, i + 200) });
   console.log(`✅ ${GROUP}-包体日报 ${pkRecs2.length} 行 (${tid2})`);
+
+  // ── 包体表按游戏名称维护筛选视图(顺序=昨日消耗降序;新游戏自动补;顺序不符删重建) ──
+  {
+    const ySpend = {};
+    pkRecs2.forEach(r => { if (r.fields['是否昨日'] === '是') ySpend[r.fields['游戏名称']] = pnum(r.fields['消耗']); });
+    const games = [...new Set(pkRecs2.map(r => r.fields['游戏名称']).filter(Boolean))]
+      .sort((a, b) => (ySpend[b] || 0) - (ySpend[a] || 0));
+    const flds = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields?page_size=50`, token)).data?.items || [];
+    const fid = flds.find(x => x.field_name === '游戏名称')?.field_id;
+    if (fid && games.length) {
+      let views = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/views?page_size=100`, token)).data?.items || [];
+      const cur = views.filter(v => games.includes(v.view_name)).map(v => v.view_name);
+      const want = games.filter(g => cur.includes(g));
+      if (JSON.stringify(cur) !== JSON.stringify(want)) {
+        for (const v of views) { if (!games.includes(v.view_name)) continue;
+          await api('DELETE', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/views/${v.view_id}`, token); }
+        views = views.filter(v => !games.includes(v.view_name));
+      }
+      const have = new Set(views.map(v => v.view_name));
+      for (const g of games) {
+        if (have.has(g)) continue;
+        const cv = await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/views`, token, { view_name: g, view_type: 'grid' });
+        if (cv.data?.view?.view_id) await api('PATCH', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/views/${cv.data.view.view_id}`, token,
+          { property: { filter_info: { conjunction: 'and', conditions: [{ field_id: fid, operator: 'is', value: JSON.stringify([g]) }] } } });
+        console.log(`  ➕ 视图「${g}」`);
+      }
+    }
+  }
   return tid;
 }
 async function main() {
