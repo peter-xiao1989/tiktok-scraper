@@ -53,8 +53,9 @@ jobs:
           fi
           npm run ads-api
 
-      # 对账:API 账户级总量 vs 表内合计,差异>$1 飞书告警(自愈补不回的当天发现)
-      - name: Audit (对账核数)
+      # 对账:API 账户级总量 vs 表内合计,差异>$1 → 自动修复(删残行重拉复核),
+      # 修不回的才飞书告警。根治"部分导入日被 dedup 永久跳过"。
+      - name: Audit (对账核数 + 自动修复)
         continue-on-error: true
         env:
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
@@ -65,6 +66,7 @@ jobs:
           FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:      ${{ secrets.FEISHU_WEBHOOK }}
           AUDIT_DAYS: '30'
+          AUTO_REPAIR: '1'
         run: node src/audit-ads.js
 
       # 导入完成后立即同步多维表(串联保证时序:数据先落地,同步在后)

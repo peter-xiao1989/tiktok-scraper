@@ -2,8 +2,11 @@
 // 投放数据对账:用 TikTok API 拉「账户级」近 N 天日消耗总量,与投放原表内
 // 同账户同日合计对比。差额>阈值 → 飞书告警(列出账户/日期/差额)。
 // 目的:抓出"自愈回看也补不回"的缺口(如账户未授权/被移出 BC),当天发现当天处理。
+// AUTO_REPAIR=1 时自动修复:删除差异账户日的残行(部分导入的旧值)→ 重拉 → 复核。
+// 根因:dedup 按账户|日期跳过,某天导入到一半(账户时区未走完/run 中断)会被永远跳过。
 // 挂 daily-ads workflow(导入后运行)。AUDIT_DAYS 默认 7。
 const https = require('https');
+const { spawnSync } = require('child_process');
 
 const SS = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const FEISHU_APP_ID = process.env.FEISHU_APP_ID || 'cli_aa898a664d395cc2';
@@ -99,19 +102,24 @@ async function main() {
     }
   }
 
-  // 表内:账户×日 合计
-  const sheetSpend = {};
-  let s = 2;
-  while (s < 20000) {
-    const r = await feishu('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/uqJEhq!B${s}:N${s + 499}`, ft);
-    const rows = r.data?.valueRange?.values || []; if (!rows.length) break;
-    rows.forEach(x => {
-      const d = x[2], nm = x[12];
-      if (!d || !nm || d < start || d > end) return;
-      sheetSpend[`${nm}|${d}`] = (sheetSpend[`${nm}|${d}`] || 0) + pnum(x[3]);
-    });
-    if (rows.length < 500) break; s += 500;
+  // 表内:账户×日 合计(walk 返回总和;cb 可拿到行号做删除定位)
+  async function walkSheet(cb) {
+    let s = 2;
+    while (s < 20000) {
+      const r = await feishu('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/uqJEhq!B${s}:N${s + 499}`, ft);
+      const rows = r.data?.valueRange?.values || []; if (!rows.length) break;
+      rows.forEach((x, i) => {
+        const d = x[2], nm = x[12];
+        if (d && nm) cb(`${nm}|${d}`, pnum(x[3]), s + i, d);
+      });
+      if (rows.length < 500) break; s += 500;
+    }
   }
+  const sheetSpend = {};
+  await walkSheet((k, sp, _row, d) => {
+    if (d < start || d > end) return;
+    sheetSpend[k] = (sheetSpend[k] || 0) + sp;
+  });
 
   // 对比
   const diffs = [];
@@ -124,12 +132,45 @@ async function main() {
 
   console.log(`⚠️ 对账差异 ${diffs.length} 条:`);
   diffs.forEach(d => console.log(`  ${d.k}: API $${d.api.toFixed(2)} vs 表 $${d.sheet.toFixed(2)}`));
+
+  let repaired = [], remaining = diffs;
+  if (process.env.AUTO_REPAIR === '1' && diffs.length <= 50) {   // >50 条 = 系统性问题,只告警不动表
+    const keys = new Set(diffs.map(d => d.k));
+    const hit = [];
+    await walkSheet((k, _sp, row) => { if (keys.has(k)) hit.push(row); });
+    hit.sort((a, b) => a - b);
+    const ranges = [];   // 合并连续行
+    for (const n of hit) {
+      if (ranges.length && n === ranges[ranges.length - 1][1] + 1) ranges[ranges.length - 1][1] = n;
+      else ranges.push([n, n]);
+    }
+    console.log(`🔧 自动修复:删除 ${hit.length} 行残数据(${ranges.length} 段)后重拉`);
+    for (const [a, b] of ranges.reverse()) {   // 自底向上删,行号不漂移
+      const r = await feishu('DELETE', `/open-apis/sheets/v2/spreadsheets/${SS}/dimension_range`, ft,
+        { dimension: { sheetId: 'uqJEhq', majorDimension: 'ROWS', startIndex: a - 1, endIndex: b } });
+      if (r.code !== 0) console.warn(`[warn] del rows ${a}-${b}: ${r.msg}`);
+    }
+    const ds = [...new Set(diffs.map(d => d.k.split('|')[1]))].sort();
+    const rc = spawnSync('node', ['src/ads-api.js'],
+      { stdio: 'inherit', env: { ...process.env, START_DATE: ds[0], END_DATE: ds[ds.length - 1], TARGET_DATE: '' } });
+    if (rc.status !== 0) console.warn('[warn] 重拉退出码', rc.status);
+    // 复核
+    const after = {};
+    await walkSheet((k, sp) => { if (keys.has(k)) after[k] = (after[k] || 0) + sp; });
+    remaining = diffs.filter(d => Math.abs(d.api - (after[d.k] || 0)) > THRESHOLD)
+      .map(d => ({ ...d, sheet: after[d.k] || 0 }));
+    repaired = diffs.filter(d => !remaining.some(x => x.k === d.k));
+    console.log(`✅ 修复成功 ${repaired.length} 条;重拉后仍有差异 ${remaining.length} 条`);
+    remaining.forEach(d => console.log(`  仍差 ${d.k}: API $${d.api.toFixed(2)} vs 表 $${d.sheet.toFixed(2)}`));
+  }
+
   const webhook = process.env.FEISHU_WEBHOOK;
-  if (webhook) {
-    const lines = diffs.slice(0, 10).map(d => `${d.k.replace('|', ' ')} API$${d.api.toFixed(1)}≠表$${d.sheet.toFixed(1)}`).join('\n');
+  if (webhook && remaining.length) {
+    const lines = remaining.slice(0, 10).map(d => `${d.k.replace('|', ' ')} API$${d.api.toFixed(1)}≠表$${d.sheet.toFixed(1)}`).join('\n');
+    const note = repaired.length ? `(另有 ${repaired.length} 条已自动修复)\n` : '';
     const u = new URL(webhook);
     await req(u.hostname, 'POST', u.pathname, { 'Content-Type': 'application/json' },
-      JSON.stringify({ msg_type: 'text', content: { text: `⚠️ 投放数据·对账差异 ${diffs.length} 条(${start}~${end})\n${lines}` } }));
+      JSON.stringify({ msg_type: 'text', content: { text: `⚠️ 投放数据·对账差异 ${remaining.length} 条(${start}~${end})\n${note}${lines}` } }));
   }
   process.exitCode = 0;  // 告警但不红 workflow
 }
