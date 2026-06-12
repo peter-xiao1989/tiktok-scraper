@@ -24,18 +24,19 @@ statistics/text 各类型,带分组/聚合(SUM/AVERAGE/MAX/MIN)/排序/筛选。
 > **sync-base.js 复用表(清记录重写),table_id 永久稳定 → 仪表盘图表不失效。**
 > 早期删表重建导致图表掉数据源,已改成复用模式根治。表已去掉序号/类别列。
 
-## 已建仪表盘(3 个)
+## 已建仪表盘
 
-### 📊 经营总览(`blkN7iTRJwPqBFga`)
-指标卡:累计总消耗 / 累计总收入 / 累计新增用户。
-趋势:每日消耗趋势、**累计ROI趋势(回本进度)**、每日新增。
-对比:各项目组累计消耗、各项目组累计ROI。
+### 📊 经营总览(`blkN7iTRJwPqBFga`)⚠️ 用户手工维护
+**bot 只能在末尾追加,严禁改/删/arrange 已有模块。**
 
-### 📈 投放分析(`blkM94uJxl3Vu2zu`)
-各项目每日消耗(多线)、各项目组累计收入/累计ROI、消耗占比(环形)、Top素材消耗、各游戏每日消耗。
+### 🎬 素材分析(`blk8GaOBZTkjBLPx`)
+方法论驱动重建版(2026-06-13):①资产盘点(评级卡+消耗分布)②分项目转化漏斗 ③吸量效率(IPM/EVR排行+散点)④回收质量(ROI/D6倍数/CPI)⑤疲劳监控(Top素材 CTR/CPM/ROI 走势)⑥新素材测试&机会榜。数据:素材分析/日趋势/漏斗 三表(build-material.js)。判定规则 docs/creative-analytics.md。
 
-### ⏱ 分时实时看板(`blkuynWz9LEIZEwk`)
-当日总消耗、在投素材数、各游戏消耗、素材消耗Top、各游戏ROAS。
+### ⏱ 投放实时监测(`blkuynWz9LEIZEwk`)
+①实时大盘卡(消耗/较昨日/较7日均/ROI/🔴🟡预警数)②pacing三线+小时增量 ③项目实时 ④预警分布 ⑤素材出价实时。数据:track-hourly.js 每小时刷新(时录9天+7日均合成行/实时对比/实时预警)。
+
+### 📱 APP经营总览(APP线 base `Fw8BbucPvaVdl8saebuc6FngnFg`, `blkoRaobobBEM6Bc`)
+昨日/累计卡 + 近30天分资源趋势(新增/活跃/收入/留存/时长/ARPDAU)+ 占比环 + 国家Top条形。数据:src/apps/fetch-ga4.js 三表。
 
 ## 业务口径(看数前必懂,否则误判)
 

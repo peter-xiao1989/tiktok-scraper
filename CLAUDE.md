@@ -18,6 +18,9 @@ TikTok realtime ──realtime(每小时*)─────────┘
 | daily-product.yml | 16:13/16:43 BJT | 产品数据导入 + 重算衍生表 |
 | realtime.yml | 每小时(worker)/每2h(cron兜底) | 分时数据 + rebuild_*.py + `sync-base.js fenshi` 同步多维表 |
 | daily-reports.yml | 08:10 / 16:40 BJT | `sync-base.js` 同步多维表(群报告 if:false 暂停) |
+| app-daily.yml | 16:23 BJT | APP线 GA4 → APP经营数据中心(与 Minis 线隔离) |
+
+- **daily-ads 内置对账自愈**(src/audit-ads.js, AUTO_REPAIR=1):账户级 API 总量 vs 表内合计,显著差异(>$20 或 >15%)自动删残行→重拉→复核,修不回才告警;≤$20 且 ≤15% 是 ad级vs账户级固有口径差,只记日志**不要试图修**。根因:dedup 按账户|日期跳过,半天导入会被永久跳过——已由该机制根治。
 
 ## 必须知道的机制(违反会出错)
 
@@ -48,5 +51,9 @@ TikTok realtime ──realtime(每小时*)─────────┘
 ## 两条产品线(严格隔离)
 
 - **Minis 线**(现有): TikTok 小游戏,数据源 TikTok Marketing API/Developer Portal,落地 TT电子表格 + TT经营数据中心(YB8TbS)+ 单项目 base。
-- **APP 线**(建设中): GP/AS 双端 app,数据源 Firebase(GA4)/AppsFlyer/广告聚合平台,代码在 `src/apps/`,落地**独立**电子表格与多维表(规划「APP经营数据中心」)。见 `src/apps/README.md`。
-- **红线**: 两线数据永不写入对方的表;表名/脚本/workflow/告警全部带线别前缀。口径差异(留存/收入定义 Firebase≠TikTok Portal)在使用时必须标注,不做跨线直接对比。
+- **APP 线**(已上线): GP/AS 双端 app(麻将/积木),GA4 Data API → 多维表「APP经营数据中心」`Fw8BbucPvaVdl8saebuc6FngnFg`,代码在 `src/apps/`,workflow app-daily.yml。详见 `src/apps/README.md`(媒体资源ID/凭证/口径)。
+- **红线**: 两线数据永不写入对方的表;表名/脚本/workflow/告警全部带线别前缀。口径差异(留存/收入定义 GA4≠TikTok Portal)在使用时必须标注,不做跨线直接对比。
+
+## 素材分析与实时监测(方法论驱动,别拍脑袋改阈值)
+
+`src/build-material.js`(生命周期评级)与 `src/track-hourly.js`(pacing三线+预警)的判定规则全部来自行业调研,依据与阈值见 **docs/creative-analytics.md** ——改阈值先读它;给用户解释评级口径也以它为准。素材表直接聚合投放原表(ad级),不再依赖 TOBfe9。
