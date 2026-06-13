@@ -61,15 +61,13 @@ async function batchDelete(token, tid, ids) {
 async function batchCreate(token, tid, recs) {
   for (let i = 0; i < recs.length; i += 200) {
     const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
-    if (r?.code && r.code !== 0) console.error(`batchCreate ERR tid=${tid}`, JSON.stringify(r));
+    if (r?.code && r.code !== 0) console.error(`batchCreate ERR tid=${tid} code=${r.code} msg=${r.msg}`);
   }
 }
 
 async function main() {
   const token = await getFeishuToken();
   const tables = await listTables(token);
-  const APP_ID_USED = process.env.FEISHU_APP_ID || 'cli_aa898a664d395cc2';
-  console.log(`listTables: ${tables.length}张表 appId=${APP_ID_USED.slice(0,12)}...`);
   const now = new Date(Date.now() + 8 * 3600e3);  // 北京时间
   const hour = now.getUTCHours();
   const tagOf = d => `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -95,9 +93,7 @@ async function main() {
     { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
     { field_name: '日标记', type: 1 }, { field_name: '记录时间', type: 5 },
   ], tables);
-  console.log(`logT=${logT} rows=${rows.length} total=${total} totalRn=${totalRn}`);
   let existing = await allRecords(token, logT);
-  console.log(`existing records: ${existing.length}, dup=${existing.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === '全部')}`);
 
   // 追加本小时快照(本小时消耗 = 当前累计 − 同日上一小时累计)
   const dup = existing.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === '全部');
@@ -118,8 +114,6 @@ async function main() {
     const recs = [mk('全部', total, totalRn, totalAct)];
     Object.entries(byGrp).forEach(([g, v]) => recs.push(mk(g, v.sp, v.rn, v.act)));
     await batchCreate(token, logT, recs);
-    const verifyLog = await allRecords(token, logT);
-    console.log(`logT after create: ${verifyLog.length} records`);
     existing = existing.concat(recs.map(x => ({ fields: x.fields, record_id: null })));
   }
 
@@ -187,8 +181,6 @@ async function main() {
     if (a7) pushCmp('③ 7日均同时点', grp, aSp, f2(fromRec(a7['广告首日ROI'])), fromRec(a7['活跃度']), f2(fromRec(a7['活跃度平均成本'])), null, null);
   }
   await batchCreate(token, cmpT, cmpRecs);
-  const verifyCmp = await allRecords(token, cmpT);
-  console.log(`cmpT: ${verifyCmp.length} records (expected ${cmpRecs.length})`);
 
   // ── 实时预警(每小时整表重算)────────────────────────────────────────────
   // 规则:消耗偏离基线±40% / ROI连续3h<7日基线×0.7 / 断量 / 游戏级 spike与高耗低回收
