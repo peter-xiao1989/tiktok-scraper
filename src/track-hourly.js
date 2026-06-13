@@ -59,7 +59,7 @@ async function batchDelete(token, tid, ids) {
 async function batchCreate(token, tid, recs) {
   for (let i = 0; i < recs.length; i += 200) {
     const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
-    if (r?.code && r.code !== 0) console.error(`batchCreate ERR tid=${tid} code=${r.code} msg=${r.msg}`);
+    if (r?.code && r.code !== 0) console.error(`batchCreate ERR tid=${tid}`, JSON.stringify(r));
   }
 }
 
@@ -184,9 +184,7 @@ async function main() {
     if (y) pushCmp('② 昨日同时点', grp, ySp, nn(y['广告首日ROI']), nn(y['活跃度']), nn(y['活跃度平均成本']), null, null);
     if (a7) pushCmp('③ 7日均同时点', grp, aSp, nn(a7['广告首日ROI']), nn(a7['活跃度']), nn(a7['活跃度平均成本']), null, null);
   }
-  const nanFields = cmpRecs.flatMap(r => Object.entries(r.fields).filter(([, v]) => typeof v === 'number' && !isFinite(v)).map(([k]) => `${r.fields['时点']}/${r.fields['项目组']}.${k}`));
-  if (nanFields.length) console.error('cmpT NaN fields:', nanFields.join(', '));
-  console.log(`cmpRecs: ${cmpRecs.length}条, sample: ${JSON.stringify(cmpRecs[0]?.fields)}`);
+  console.log(`cmpRecs (${cmpRecs.length}):`, JSON.stringify(cmpRecs));
   await batchCreate(token, cmpT, cmpRecs);
   const verifyCmp = await allRecords(token, cmpT);
   console.log(`cmpT after create: ${verifyCmp.length} records`);
