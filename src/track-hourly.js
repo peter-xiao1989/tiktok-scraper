@@ -34,8 +34,8 @@ async function api(m, p, t, b) {
 }
 const pnum = v => parseFloat(String(v == null ? '' : v).replace(/[,%]/g, '')) || 0;
 const pad = n => String(n).padStart(2, '0');
-const f1 = v => Math.round(v * 10) / 10;
-const f2 = v => Math.round(v * 100) / 100;
+const f1 = v => (v == null || isNaN(v) || !isFinite(v)) ? null : Math.round(v * 10) / 10;
+const f2 = v => (v == null || isNaN(v) || !isFinite(v)) ? null : Math.round(v * 100) / 100;
 
 async function listTables(token) { return (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables?page_size=100`, token)).data?.items || []; }
 async function allRecords(token, tid) {
@@ -107,7 +107,7 @@ async function main() {
       return { fields: { '日期': tag, '小时': hour, '项目组': grp,
         '消耗': f1(sp), '本小时消耗': prev ? Math.max(f1(sp - pnum(prev.fields['消耗'])), 0) : f1(sp),
         '广告首日ROI': sp ? f2(rn / sp) : null,
-        '活跃度': Math.round(act), '活跃度平均成本': act ? f2(sp / act) : null,
+        '活跃度': (act == null || isNaN(act)) ? null : Math.round(act), '活跃度平均成本': act ? f2(sp / act) : null,
         '日标记': '①今日', '记录时间': Date.now() } };
     };
     const recs = [mk('全部', total, totalRn, totalAct)];
@@ -165,7 +165,7 @@ async function main() {
   const cmpRecs = [];
   const pushCmp = (tp, grp, sp, roi, act, acost, vsY, vsA) => cmpRecs.push({ fields: { '时点': tp, '项目组': grp,
     '消耗': sp == null ? null : f1(sp), '广告首日ROI': roi ?? null,
-    '活跃度': act == null ? null : Math.round(act), '活跃度平均成本': acost ?? null,
+    '活跃度': (act == null || isNaN(act)) ? null : Math.round(act), '活跃度平均成本': acost ?? null,
     '同时段环比': vsY ?? null, '较7日均': vsA ?? null, '记录时间': Date.now() } });
   const curOf = grp => grp === '全部'
     ? { sp: total, roi: total ? totalRn / total : null, act: totalAct, acost: totalAct ? total / totalAct : null }
