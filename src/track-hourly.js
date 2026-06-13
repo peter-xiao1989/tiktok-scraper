@@ -36,6 +36,7 @@ const pnum = v => parseFloat(String(v == null ? '' : v).replace(/[,%]/g, '')) ||
 const pad = n => String(n).padStart(2, '0');
 const f1 = v => (v == null || isNaN(v) || !isFinite(v)) ? null : Math.round(v * 10) / 10;
 const f2 = v => (v == null || isNaN(v) || !isFinite(v)) ? null : Math.round(v * 100) / 100;
+const nn = v => (v == null || (typeof v === 'number' && !isFinite(v))) ? null : v;
 
 async function listTables(token) { return (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables?page_size=100`, token)).data?.items || []; }
 async function allRecords(token, tid) {
@@ -136,7 +137,7 @@ async function main() {
       const m = f => samples.reduce((s, x) => s + pnum(x.fields[f]), 0) / samples.length;
       avgRecs.push({ fields: { '日期': AVG, '小时': h, '项目组': grp,
         '消耗': f1(m('消耗')), '本小时消耗': f1(m('本小时消耗')), '广告首日ROI': f2(m('广告首日ROI')),
-        '活跃度': Math.round(m('活跃度')), '活跃度平均成本': f2(m('活跃度平均成本')),
+        '活跃度': (v => v == null || isNaN(v) ? null : Math.round(v))(m('活跃度')), '活跃度平均成本': f2(m('活跃度平均成本')),
         '日标记': '③7日均', '记录时间': Date.now() } });
     }
   }
@@ -168,9 +169,9 @@ async function main() {
   await batchDelete(token, cmpT, oldCmp.map(x => x.record_id));
   const cmpRecs = [];
   const pushCmp = (tp, grp, sp, roi, act, acost, vsY, vsA) => cmpRecs.push({ fields: { '时点': tp, '项目组': grp,
-    '消耗': sp == null ? null : f1(sp), '广告首日ROI': roi ?? null,
-    '活跃度': (act == null || isNaN(act)) ? null : Math.round(act), '活跃度平均成本': acost ?? null,
-    '同时段环比': vsY ?? null, '较7日均': vsA ?? null, '记录时间': Date.now() } });
+    '消耗': f1(sp), '广告首日ROI': nn(roi),
+    '活跃度': (act == null || isNaN(act)) ? null : Math.round(act), '活跃度平均成本': nn(acost),
+    '同时段环比': nn(vsY), '较7日均': nn(vsA), '记录时间': Date.now() } });
   const curOf = grp => grp === '全部'
     ? { sp: total, roi: total ? totalRn / total : null, act: totalAct, acost: totalAct ? total / totalAct : null }
     : { sp: byGrp[grp]?.sp || 0, roi: byGrp[grp]?.sp ? byGrp[grp].rn / byGrp[grp].sp : null, act: byGrp[grp]?.act || 0, acost: byGrp[grp]?.act ? byGrp[grp].sp / byGrp[grp].act : null };
@@ -180,10 +181,15 @@ async function main() {
     const ySp = y ? pnum(y['消耗']) : null, aSp = a7 ? pnum(a7['消耗']) : null;
     pushCmp('① 今日实时', grp, cur.sp, cur.roi != null ? f2(cur.roi) : null, cur.act, cur.acost != null ? f2(cur.acost) : null,
       ySp ? f2((cur.sp - ySp) / ySp) : null, aSp ? f2((cur.sp - aSp) / aSp) : null);
-    if (y) pushCmp('② 昨日同时点', grp, ySp, y['广告首日ROI'] ?? null, y['活跃度'] ?? null, y['活跃度平均成本'] ?? null, null, null);
-    if (a7) pushCmp('③ 7日均同时点', grp, aSp, a7['广告首日ROI'] ?? null, a7['活跃度'] ?? null, a7['活跃度平均成本'] ?? null, null, null);
+    if (y) pushCmp('② 昨日同时点', grp, ySp, nn(y['广告首日ROI']), nn(y['活跃度']), nn(y['活跃度平均成本']), null, null);
+    if (a7) pushCmp('③ 7日均同时点', grp, aSp, nn(a7['广告首日ROI']), nn(a7['活跃度']), nn(a7['活跃度平均成本']), null, null);
   }
+  const nanFields = cmpRecs.flatMap(r => Object.entries(r.fields).filter(([, v]) => typeof v === 'number' && !isFinite(v)).map(([k]) => `${r.fields['时点']}/${r.fields['项目组']}.${k}`));
+  if (nanFields.length) console.error('cmpT NaN fields:', nanFields.join(', '));
+  console.log(`cmpRecs: ${cmpRecs.length}条, sample: ${JSON.stringify(cmpRecs[0]?.fields)}`);
   await batchCreate(token, cmpT, cmpRecs);
+  const verifyCmp = await allRecords(token, cmpT);
+  console.log(`cmpT after create: ${verifyCmp.length} records`);
 
   // ── 实时预警(每小时整表重算)────────────────────────────────────────────
   // 规则:消耗偏离基线±40% / ROI连续3h<7日基线×0.7 / 断量 / 游戏级 spike与高耗低回收
