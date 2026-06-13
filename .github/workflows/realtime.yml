@@ -75,6 +75,14 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
         run: node src/sync-base.js fenshi
 
+      - name: 实时投放监测(pacing三线+预警写多维表)
+        id: hourly
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: npm run track-hourly
+
       # 发群暂停(等报告样式优化后恢复):删除下方 if 即恢复发送
       - name: Render & send 分时报告到选品群
         if: ${{ false }}
@@ -93,12 +101,12 @@ jobs:
         run: |
           [ -z "$FEISHU_WEBHOOK" ] && exit 0
           ico() { case "$1" in success) echo "✅";; skipped|"") echo "⏭️";; *) echo "❌";; esac; }
-          F='${{ steps.fetch.outcome }}'; A='${{ steps.fenshi.outcome }}'; B='${{ steps.sucai.outcome }}'; C='${{ steps.sync.outcome }}'
-          if [ "$F" = success ] && [ "$A" = success ] && [ "$B" = success ] && [ "$C" = success ]; then exit 0; fi
+          F='${{ steps.fetch.outcome }}'; A='${{ steps.fenshi.outcome }}'; B='${{ steps.sucai.outcome }}'; C='${{ steps.sync.outcome }}'; H='${{ steps.hourly.outcome }}'
+          if [ "$F" = success ] && [ "$A" = success ] && [ "$B" = success ] && [ "$C" = success ] && [ "$H" = success ]; then exit 0; fi
           if [ "$F" != success ]; then HEAD="🔴 分时刷新·核心抓取失败"; else HEAD="🟡 分时刷新·部分表未更新(下次自动补)"; fi
           BJT=$(TZ=Asia/Shanghai date '+%m-%d %H:%M')
           URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          TEXT="$HEAD ($BJT)\n$(ico "$F") 分时原表·核心抓取\n$(ico "$A") 分时同步汇总表\n$(ico "$B") 分时素材效果表\n$(ico "$C") 多维表同步\n$URL"
+          TEXT="$HEAD ($BJT)\n$(ico "$F") 分时原表·核心抓取\n$(ico "$A") 分时同步汇总表\n$(ico "$B") 分时素材效果表\n$(ico "$C") 多维表同步\n$(ico "$H") 实时监测写入\n$URL"
           curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
             -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$TEXT\"}}"
           [ "$F" = success ] || exit 1   # 核心失败才让 workflow 标红;仅下游🟡不标红

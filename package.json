@@ -14,6 +14,7 @@
     "ads-realtime": "node src/ads-realtime.js",
     "product-api": "node src/product-api.js",
     "app-ga4": "node src/apps/fetch-ga4.js",
+    "track-hourly": "node src/track-hourly.js",
     "diag": "node src/diag.js"
   },
   "keywords": [],
