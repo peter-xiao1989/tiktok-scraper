@@ -9,7 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: 'Override date YYYY-MM-DD (default: yesterday)'
+        description: 'Override date YYYY-MM-DD (default: yesterday; ignored if start_date set)'
+        required: false
+      start_date:
+        description: 'Range start YYYY-MM-DD (for historical backfill)'
+        required: false
+      end_date:
+        description: 'Range end YYYY-MM-DD (for historical backfill; default: yesterday)'
         required: false
 
 concurrency:
@@ -41,11 +47,18 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
           TARGET_DATE:       ${{ github.event.inputs.target_date }}
+          START_DATE:        ${{ github.event.inputs.start_date }}
+          END_DATE:          ${{ github.event.inputs.end_date }}
         run: |
-          # 留存指标 T+N 才回填:平日回看3天(覆盖次留),周日回看31天(覆盖7/14/30留)
-          DAYS=3; [ "$(date -u +%u)" = "7" ] && DAYS=31
-          export DAYS
-          echo "DAYS=$DAYS"
+          # 手动指定日期范围(历史补录):START_DATE/END_DATE 优先;否则平日回看3天/周日31天
+          if [ -n "$START_DATE" ]; then
+            export END_DATE="${END_DATE:-$(date -u -d '-1 day' +%F)}"
+            echo "backfill range: $START_DATE ~ $END_DATE"
+          else
+            DAYS=3; [ "$(date -u +%u)" = "7" ] && DAYS=31
+            export DAYS
+            echo "DAYS=$DAYS"
+          fi
           for i in 1 2 3; do
             echo "=== product-api attempt $i ==="
             if npm run product-api; then exit 0; fi
@@ -53,6 +66,14 @@ jobs:
             sleep 30
           done
           echo "all attempts failed"; exit 1
+
+      - name: Audit 产品数据缺口(近14天)
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
+        run: npm run audit-product
 
       # 导入完成后立即同步多维表(产品侧:经营概览/日报等)
       - name: Sync Base (多维表)
