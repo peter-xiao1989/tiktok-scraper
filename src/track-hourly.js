@@ -37,6 +37,8 @@ const pad = n => String(n).padStart(2, '0');
 const f1 = v => (v == null || isNaN(v) || !isFinite(v)) ? null : Math.round(v * 10) / 10;
 const f2 = v => (v == null || isNaN(v) || !isFinite(v)) ? null : Math.round(v * 100) / 100;
 const nn = v => (v == null || (typeof v === 'number' && !isFinite(v))) ? null : v;
+// logT 某些字段因 Feishu 建表时 type 落为 text,读回来是字符串 — 统一解析
+const fromRec = v => v == null ? null : (typeof v === 'number' ? v : pnum(v));
 
 async function listTables(token) { return (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables?page_size=100`, token)).data?.items || []; }
 async function allRecords(token, tid) {
@@ -181,13 +183,12 @@ async function main() {
     const ySp = y ? pnum(y['消耗']) : null, aSp = a7 ? pnum(a7['消耗']) : null;
     pushCmp('① 今日实时', grp, cur.sp, cur.roi != null ? f2(cur.roi) : null, cur.act, cur.acost != null ? f2(cur.acost) : null,
       ySp ? f2((cur.sp - ySp) / ySp) : null, aSp ? f2((cur.sp - aSp) / aSp) : null);
-    if (y) pushCmp('② 昨日同时点', grp, ySp, nn(y['广告首日ROI']), nn(y['活跃度']), nn(y['活跃度平均成本']), null, null);
-    if (a7) pushCmp('③ 7日均同时点', grp, aSp, nn(a7['广告首日ROI']), nn(a7['活跃度']), nn(a7['活跃度平均成本']), null, null);
+    if (y) pushCmp('② 昨日同时点', grp, ySp, f2(fromRec(y['广告首日ROI'])), fromRec(y['活跃度']), f2(fromRec(y['活跃度平均成本'])), null, null);
+    if (a7) pushCmp('③ 7日均同时点', grp, aSp, f2(fromRec(a7['广告首日ROI'])), fromRec(a7['活跃度']), f2(fromRec(a7['活跃度平均成本'])), null, null);
   }
-  console.log(`cmpRecs (${cmpRecs.length}):`, JSON.stringify(cmpRecs));
   await batchCreate(token, cmpT, cmpRecs);
   const verifyCmp = await allRecords(token, cmpT);
-  console.log(`cmpT after create: ${verifyCmp.length} records`);
+  console.log(`cmpT: ${verifyCmp.length} records (expected ${cmpRecs.length})`);
 
   // ── 实时预警(每小时整表重算)────────────────────────────────────────────
   // 规则:消耗偏离基线±40% / ROI连续3h<7日基线×0.7 / 断量 / 游戏级 spike与高耗低回收
