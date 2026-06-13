@@ -65,6 +65,7 @@ async function batchCreate(token, tid, recs) {
 async function main() {
   const token = await getFeishuToken();
   const tables = await listTables(token);
+  console.log(`listTables: ${tables.length}张表, 含: ${tables.map(x=>x.name).join('|')}`);
   const now = new Date(Date.now() + 8 * 3600e3);  // 北京时间
   const hour = now.getUTCHours();
   const tagOf = d => `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -90,6 +91,7 @@ async function main() {
     { field_name: '活跃度', type: 2 }, { field_name: '活跃度平均成本', type: 2 },
     { field_name: '日标记', type: 1 }, { field_name: '记录时间', type: 5 },
   ], tables);
+  console.log(`logT=${logT} rows=${rows.length} total=${total} totalRn=${totalRn}`);
   let existing = await allRecords(token, logT);
 
   // 追加本小时快照(本小时消耗 = 当前累计 − 同日上一小时累计)
