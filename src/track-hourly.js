@@ -71,7 +71,7 @@ async function main() {
   for (let i = 0; i <= 8; i++) keepTags.add(tagOf(new Date(now.getTime() - i * 864e5)));
   const AVG = '7日均';
 
-  // 当前分时消耗(jdlBTh 明细行,项目组非空)
+  // 当前分时消耗(jdlBTh 明细行,消耗>0 的行全量纳入全部合计;有项目组的行另做分组)
   const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/jdlBTh!C2:I40?valueRenderOption=FormattedValue`, token);
   const rows = (r.data?.valueRange?.values || []).filter(x => pnum(x[3]) > 0);  // C项目组0 D游戏1 E出价2 F消耗3 G_ROAS4 H活跃成本5 I活跃度6
   const ppct = v => { const str = String(v == null ? '' : v); return str.includes('%') ? pnum(str) / 100 : pnum(str); };
