@@ -56,7 +56,10 @@ async function batchDelete(token, tid, ids) {
   for (let i = 0; i < ids.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_delete`, token, { records: ids.slice(i, i + 500) });
 }
 async function batchCreate(token, tid, recs) {
-  for (let i = 0; i < recs.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
+  for (let i = 0; i < recs.length; i += 200) {
+    const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
+    if (r?.code && r.code !== 0) console.error(`batchCreate ERR tid=${tid} code=${r.code} msg=${r.msg}`);
+  }
 }
 
 async function main() {
