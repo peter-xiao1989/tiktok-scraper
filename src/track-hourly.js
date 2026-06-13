@@ -65,7 +65,8 @@ async function batchCreate(token, tid, recs) {
 async function main() {
   const token = await getFeishuToken();
   const tables = await listTables(token);
-  console.log(`listTables: ${tables.length}张表, 含: ${tables.map(x=>x.name).join('|')}`);
+  const APP_ID_USED = process.env.FEISHU_APP_ID || 'cli_aa898a664d395cc2';
+  console.log(`listTables: ${tables.length}张表 appId=${APP_ID_USED.slice(0,12)}...`);
   const now = new Date(Date.now() + 8 * 3600e3);  // 北京时间
   const hour = now.getUTCHours();
   const tagOf = d => `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
@@ -93,6 +94,7 @@ async function main() {
   ], tables);
   console.log(`logT=${logT} rows=${rows.length} total=${total} totalRn=${totalRn}`);
   let existing = await allRecords(token, logT);
+  console.log(`existing records: ${existing.length}, dup=${existing.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === '全部')}`);
 
   // 追加本小时快照(本小时消耗 = 当前累计 − 同日上一小时累计)
   const dup = existing.some(x => x.fields['日期'] === tag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === '全部');
