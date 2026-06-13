@@ -73,11 +73,12 @@ async function main() {
 
   // 当前分时消耗(jdlBTh 明细行,项目组非空)
   const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/jdlBTh!C2:I40?valueRenderOption=FormattedValue`, token);
-  const rows = (r.data?.valueRange?.values || []).filter(x => x[0]);  // C项目组0 D游戏1 E出价2 F消耗3 G_ROAS4 H活跃成本5 I活跃度6
+  const rows = (r.data?.valueRange?.values || []).filter(x => pnum(x[3]) > 0);  // C项目组0 D游戏1 E出价2 F消耗3 G_ROAS4 H活跃成本5 I活跃度6
   const ppct = v => { const str = String(v == null ? '' : v); return str.includes('%') ? pnum(str) / 100 : pnum(str); };
   const byGrp = {}; let total = 0, totalRn = 0, totalAct = 0;
   rows.forEach(x => { const sp = pnum(x[3]), rn = sp * ppct(x[4]);
-    const g = byGrp[x[0]] = byGrp[x[0]] || { sp: 0, rn: 0, act: 0 }; g.sp += sp; g.rn += rn; g.act += pnum(x[6]); total += sp; totalRn += rn; totalAct += pnum(x[6]); });
+    total += sp; totalRn += rn; totalAct += pnum(x[6]);
+    if (x[0]) { const g = byGrp[x[0]] = byGrp[x[0]] || { sp: 0, rn: 0, act: 0 }; g.sp += sp; g.rn += rn; g.act += pnum(x[6]); } });
 
   // ── 实时消耗时录:今日+近8日累计快照 + 7日均合成行 ──────────────────────
   const logT = await ensureTable(token, T_LOG, [
