@@ -113,6 +113,8 @@ async function main() {
     const recs = [mk('全部', total, totalRn, totalAct)];
     Object.entries(byGrp).forEach(([g, v]) => recs.push(mk(g, v.sp, v.rn, v.act)));
     await batchCreate(token, logT, recs);
+    const verifyLog = await allRecords(token, logT);
+    console.log(`logT after create: ${verifyLog.length} records`);
     existing = existing.concat(recs.map(x => ({ fields: x.fields, record_id: null })));
   }
 
