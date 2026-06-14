@@ -65,10 +65,7 @@ async function browserLogin() {
     await page.goto(`${BASE}/login`, { waitUntil: 'load', timeout: 30000 });
     await page.locator('input[placeholder="Email"]').fill(EMAIL);
     await page.locator('input[placeholder="Password"]').fill(PASSWORD);
-    await page.waitForFunction(
-      () => !document.querySelector('button[type="submit"]')?.disabled,
-      { timeout: 10000 }
-    );
+    await page.locator('button[type="submit"]').waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('button[type="submit"]').click();
 
     // Wait up to 20s for redirect. If still on /login, assume email verification.

@@ -30,10 +30,7 @@ async function main() {
     // Auto-fill credentials
     await page.locator('input[placeholder="Email"]').fill(EMAIL);
     await page.locator('input[placeholder="Password"]').fill(PASSWORD);
-    await page.waitForFunction(
-      () => !document.querySelector('button[type="submit"]')?.disabled,
-      { timeout: 10000 }
-    );
+    await page.locator('button[type="submit"]').waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('button[type="submit"]').click();
 
     // Wait for redirect or verification form
