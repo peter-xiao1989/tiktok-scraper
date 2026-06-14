@@ -1,0 +1,596 @@
+[
+ {
+  "unifiedProductId": 5911,
+  "id": 30060,
+  "name": "射爆：3D射击",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 6782,
+  "id": 15175,
+  "name": "Pixel Gun Fighter",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 9896,
+  "id": 37203,
+  "name": "Bubble Shooter",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 11202,
+  "id": 7157,
+  "name": "War Games - Commander",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 17528,
+  "id": 20490,
+  "name": "枪弹战士",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 17883,
+  "id": 20975,
+  "name": "X War",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 20430,
+  "id": 24716,
+  "name": "Mechanical Soldier",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 20863,
+  "id": 25391,
+  "name": "FPS突击队精英任务--顶级射手",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 20984,
+  "id": 25548,
+  "name": "海战棋 - Fleet Battle - 海战游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 25019,
+  "id": 30191,
+  "name": "Shooting Cubes",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 25465,
+  "id": 189061,
+  "name": "striker 空戦 戦争飛行機",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 25958,
+  "id": 31295,
+  "name": "Soldier",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 26131,
+  "id": 44353,
+  "name": "《狙击高手：3D射击》",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 32145,
+  "id": 13469,
+  "name": "Gun Gun Mobile",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 45260,
+  "id": 33108,
+  "name": "射击狙击手：目标范围",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 45344,
+  "id": 33219,
+  "name": "射击3D : 射击之神",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 47347,
+  "id": 35849,
+  "name": "火柴人钩",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 47992,
+  "id": 36361,
+  "name": "CheetahBoo 泡泡射击-街机游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 48557,
+  "id": 36807,
+  "name": "Stickman Shooter",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 53597,
+  "id": 40959,
+  "name": "Battle Tanks: 坦克游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 54177,
+  "id": 41438,
+  "name": "Counter Attack",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 59127,
+  "id": 45052,
+  "name": "Sniper Warrior: PvP Sniper",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 66892,
+  "id": 40216,
+  "name": "欧陆大战略：拿破仑，战争之路与战争策略游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 76498,
+  "id": 60146,
+  "name": "狙击射击",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 85012,
+  "id": 67908,
+  "name": "Gun Gun SohaGame",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 92611,
+  "id": 76174,
+  "name": "战争2061",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 111522,
+  "id": 92053,
+  "name": "Hitman Assassin - 生死狙击 打枪游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 113292,
+  "id": 93768,
+  "name": "枪声：枪模拟器 Gun Sound",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 116004,
+  "id": 96434,
+  "name": "Forward Assault: 战术射手",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 133239,
+  "id": 121830,
+  "name": "Counter Stealth",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 134212,
+  "id": 123451,
+  "name": "Chaos Combat",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 134344,
+  "id": 123774,
+  "name": "Mafia Warfare",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 135736,
+  "id": 125796,
+  "name": "Gun Panda Gun",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 152890,
+  "id": 150361,
+  "name": "真正的突击队射击游戏 - 离线枪支游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 156083,
+  "id": 327328,
+  "name": "Girl Wars",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 160490,
+  "id": 168569,
+  "name": "Stickman Shooter!",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 164108,
+  "id": 351308,
+  "name": "Idle Warfare",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 170380,
+  "id": 187702,
+  "name": "Black Commando : Special Ops",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 171473,
+  "id": 190330,
+  "name": "地牢战争",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 174484,
+  "id": 196313,
+  "name": "Beach Shooting",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 176300,
+  "id": 199077,
+  "name": "Pixel Gun Run",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 180082,
+  "id": 203665,
+  "name": "Soldier Stack",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 181038,
+  "id": 204791,
+  "name": "Soldier Mover",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 182085,
+  "id": 206048,
+  "name": "FPS Rogue",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 183496,
+  "id": 207741,
+  "name": "Idle Soldier",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 183950,
+  "id": 208263,
+  "name": "Run and Shoot - Shoot Enemies",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 184608,
+  "id": 209050,
+  "name": "Monster Shooting",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 187714,
+  "id": 212809,
+  "name": "火柴人M",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 188611,
+  "id": 213940,
+  "name": "Assault Commando Commando game",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 194470,
+  "id": 221598,
+  "name": "Sniper zone: Shooter game",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 207755,
+  "id": 267600,
+  "name": "枪战射擊槍戰FPS",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 209444,
+  "id": 244157,
+  "name": "Gun  Shoot Number",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 210918,
+  "id": 246293,
+  "name": "Shoot Gun",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 214489,
+  "id": 250973,
+  "name": "狙击大师：终极狙击手",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 215920,
+  "id": 253040,
+  "name": "弄死火柴人-火柴人格斗-火柴人军团-火柴人联盟-火柴人必须死",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 217851,
+  "id": 256047,
+  "name": "Gun Shooting Games: Army War",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 240272,
+  "id": 296996,
+  "name": "3D FPS 射击-3D FPS 游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 241383,
+  "id": 300563,
+  "name": "Ice Gun Shoot",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 243929,
+  "id": 307130,
+  "name": "Stickman Paint Shooter",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 251065,
+  "id": 326967,
+  "name": "Stickman Gun Shooter",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 251931,
+  "id": 329013,
+  "name": "Dino Egg Shoot Bubble Shoot",
+  "type": 3
+ },
+ {
+  "unifiedProductId": 256771,
+  "id": 339999,
+  "name": "Ball Shoot Gun",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 264101,
+  "id": 436935,
+  "name": "Commando",
+  "type": 6
+ },
+ {
+  "unifiedProductId": 273534,
+  "id": 374796,
+  "name": "Fps 离线射击游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 273628,
+  "id": 374921,
+  "name": "战斗机 战争 空战",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 274373,
+  "id": 375995,
+  "name": "Kings Battle : Battle Arena",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 330357,
+  "id": 442964,
+  "name": "Gun Sound: Gun Shoot Simulator",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 704968,
+  "id": 879934,
+  "name": "狙击手射击：专业射击",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 876495,
+  "id": 1739560,
+  "name": "Stickman Shooter!",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1211728,
+  "id": 2281984,
+  "name": "火柴人 io：火柴人派对",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1583891,
+  "id": 6072,
+  "name": "枪炮奇兵",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1592055,
+  "id": 60365,
+  "name": "321枪战",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1598312,
+  "id": 118691,
+  "name": "Money Counter",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1603890,
+  "id": 169903,
+  "name": "FPS游戏离线 : 射击游戏多人 3D",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1604438,
+  "id": 175281,
+  "name": "Idle Warfare",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1604751,
+  "id": 178962,
+  "name": "Ninja Strike",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1605451,
+  "id": 187345,
+  "name": "Gun Games : Gun Shooting Games",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1605853,
+  "id": 192301,
+  "name": "Warfare",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1606338,
+  "id": 198793,
+  "name": "FPS突击队射击枪游戏",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1606367,
+  "id": 199066,
+  "name": "Pixel Gun Run",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1608544,
+  "id": 226724,
+  "name": "Counter Forces",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1611056,
+  "id": 268805,
+  "name": "Strike Force",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1613176,
+  "id": 324196,
+  "name": "First Strike",
+  "type": 6
+ },
+ {
+  "unifiedProductId": 1613634,
+  "id": 332980,
+  "name": "Shoot",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1613759,
+  "id": 335509,
+  "name": "Tank Strike",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1614259,
+  "id": 345090,
+  "name": "狙击精英",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1614932,
+  "id": 358154,
+  "name": "Commando",
+  "type": 3
+ },
+ {
+  "unifiedProductId": 1769647,
+  "id": 2885423,
+  "name": "枪声枪支模拟器 - 激光枪激光剑",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1818650,
+  "id": 2939026,
+  "name": "Cloud Assault",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1870521,
+  "id": 3009978,
+  "name": "Suction Combat",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1922197,
+  "id": 3084309,
+  "name": "Battle Shoot: Shoot Lets Play",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 1957056,
+  "id": 3131395,
+  "name": "Galaxy War - Space War",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2024315,
+  "id": 3225386,
+  "name": "Shooting Bang",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2566934,
+  "id": 3894240,
+  "name": "Army Games Army Simulator",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2576170,
+  "id": 3908588,
+  "name": "Pixel Gun 2",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2642343,
+  "id": 4001809,
+  "name": "Army Game Army Simulator",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2725227,
+  "id": 4118301,
+  "name": "Assault",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2752091,
+  "id": 4149437,
+  "name": "Army Games: Army Simulator",
+  "type": 1
+ },
+ {
+  "unifiedProductId": 2753066,
+  "id": 4150547,
+  "name": "Army Chase Army Simulator",
+  "type": 1
+ }
+]

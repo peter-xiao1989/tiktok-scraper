@@ -1,0 +1,69 @@
+name: ADX 竞品素材采集 (17:00 BJT)
+
+on:
+  schedule:
+    - cron: '0 9 * * *'    # 17:00 BJT，每天 1 次追新素材
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '每赛道限产品数 (调试用, 留空=全部)'
+        required: false
+      perprod:
+        description: '每产品取素材数 (默认 3)'
+        required: false
+
+concurrency:
+  group: adx-creatives
+  cancel-in-progress: false
+
+jobs:
+  adx-creatives:
+    name: ADX → 工作台素材洞察(监狱/枪战 全渠道竞品爆款)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npx playwright install chromium --with-deps
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ddddocr (验证码识别)
+        run: pip install ddddocr
+
+      - name: Run ADX pipeline (retry on login fail)
+        env:
+          ADX_USER:        ${{ secrets.ADX_USER }}
+          ADX_PASS:        ${{ secrets.ADX_PASS }}
+          ADX_INGEST_KEY:  ${{ secrets.ADX_INGEST_KEY }}
+          ADX_WORKBENCH:   ${{ secrets.ADX_WORKBENCH }}
+          ADX_LIMIT:       ${{ github.event.inputs.limit }}
+          ADX_PERPROD:     ${{ github.event.inputs.perprod }}
+        run: |
+          for i in 1 2 3; do
+            echo "=== ADX pipeline attempt $i ==="
+            if node adx/pipeline.mjs; then exit 0; fi
+            echo "attempt $i failed (likely captcha/login); retry in 30s..."
+            sleep 30
+          done
+          echo "all attempts failed"; exit 1
+
+      - name: Notify failure to Feishu
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          [ -z "$FEISHU_WEBHOOK" ] && echo "no FEISHU_WEBHOOK, skip" && exit 0
+          BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 ADX竞品素材采集失败 ($BJT BJT)\n$URL\"}}"
