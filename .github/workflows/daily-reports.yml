@@ -55,8 +55,9 @@ jobs:
 
       - name: Sync sheets to Base (node)
         env:
-          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_APP_ID:       ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:   ${{ secrets.FEISHU_APP_SECRET }}
+          TANCHI_PISA_BASE:    ${{ secrets.TANCHI_PISA_BASE }}
         run: |
           npm ci
           node src/sync-base.js "${{ steps.kind.outputs.kind }}"

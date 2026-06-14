@@ -229,6 +229,7 @@ async function main() {
     await require('./build-yesterday').main();
     await require('./build-material').main();
     await require('./sync-qiangzhan').main();
+    await require('./sync-tanchi-pisa').main();
   }
   console.log('同步完成。');
 }
