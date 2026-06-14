@@ -7,7 +7,7 @@ const { getFeishuToken } = require('./build-summaries');
 const SS = 'J8mswO2vziyIAAkdt4rcVeaDnog';
 const PROJECTS = [
   { group: '贪吃蛇' },
-  { group: '披萨店' },
+  { group: '披萨' },
 ];
 const SKIP_COLS = new Set(['序号', '手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI']);
 const RENAME = { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' };
