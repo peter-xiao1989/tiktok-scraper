@@ -41,8 +41,10 @@ jobs:
 
       - name: Run product-api (retry on login timeout)
         env:
+          TIKTOK_COOKIES:    ${{ secrets.TIKTOK_COOKIES }}
           TIKTOK_EMAIL:      ${{ secrets.TIKTOK_EMAIL }}
           TIKTOK_PASSWORD:   ${{ secrets.TIKTOK_PASSWORD }}
+          EMAIL_163_PASS:    ${{ secrets.EMAIL_163_PASS }}
           FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}

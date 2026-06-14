@@ -171,7 +171,10 @@ async function main() {
   const curOf = grp => grp === '全部'
     ? { sp: total, roi: total ? totalRn / total : null, act: totalAct, acost: totalAct ? total / totalAct : null }
     : { sp: byGrp[grp]?.sp || 0, roi: byGrp[grp]?.sp ? byGrp[grp].rn / byGrp[grp].sp : null, act: byGrp[grp]?.act || 0, acost: byGrp[grp]?.act ? byGrp[grp].sp / byGrp[grp].act : null };
-  for (const grp of ['全部', ...Object.keys(byGrp)]) {
+  // 合并今日活跃 + 昨日有记录的项目组,避免昨日有量但今日暂无量的项目缺行
+  const histGrps = [...new Set(real.filter(x => x.fields['日期'] === ytag).map(x => x.fields['项目组']))].filter(g => g && g !== '全部');
+  const cmpGrps = ['全部', ...new Set([...Object.keys(byGrp), ...histGrps])];
+  for (const grp of cmpGrps) {
     const cur = curOf(grp);
     const y = atHour(ytag, grp, hour), a7 = avgAt(grp, hour);
     const ySp = y ? pnum(y['消耗']) : null, aSp = a7 ? pnum(a7['消耗']) : null;
