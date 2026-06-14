@@ -183,6 +183,8 @@ async function main() {
     if (y) pushCmp('② 昨日同时点', grp, ySp, f2(fromRec(y['广告首日ROI'])), fromRec(y['活跃度']), f2(fromRec(y['活跃度平均成本'])), null, null);
     if (a7) pushCmp('③ 7日均同时点', grp, aSp, f2(fromRec(a7['广告首日ROI'])), fromRec(a7['活跃度']), f2(fromRec(a7['活跃度平均成本'])), null, null);
   }
+  console.log(`[cmp] grps=${cmpGrps.join(',')} histGrps=${histGrps.join(',')} recs=${cmpRecs.length}`);
+  cmpRecs.forEach(r => { const f = r.fields; if (f['消耗'] != null) console.log(`  ${f['时点']} | ${f['项目组']} | 消耗${f['消耗']}`); });
   await batchCreate(token, cmpT, cmpRecs);
 
   // ── 实时预警(每小时整表重算)────────────────────────────────────────────
