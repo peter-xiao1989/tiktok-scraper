@@ -38,9 +38,9 @@ async function syncProject(token, GROUP, QZ) {
   // 读 JIKPZV 全表(FormattedValue)
   let grid = [], s = 1;
   while (s < 500000) {
-    const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/JIKPZV!A${s}:AZ${s + 499}?valueRenderOption=FormattedValue`, token);
+    const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/JIKPZV!A${s}:AZ${s + 999}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
-    grid = grid.concat(vs); if (vs.length < 500) break; s += 500;
+    grid = grid.concat(vs); if (vs.length < 1000) break; s += 1000;
   }
   const rawHeader = grid[0].map(v => String(v || '').trim());
   const keep = rawHeader.map((h, j) => ({ h: RENAME[h] || h, j })).filter(x => x.h && !SKIP_COLS.has(rawHeader[x.j]));
@@ -97,7 +97,7 @@ async function syncProject(token, GROUP, QZ) {
   while (s2 < 500000) {
     const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/6B1PVx!A${s2}:V${s2 + 499}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
-    g2 = g2.concat(vs); if (vs.length < 500) break; s2 += 500;
+    g2 = g2.concat(vs); if (vs.length < 1000) break; s2 += 1000;
   }
   // 全列复制 6B1PVx(header 驱动,改名与主表一致,去序号/出价/项目组)
   const pkRawHeader = g2[0].map(v => String(v || '').trim());

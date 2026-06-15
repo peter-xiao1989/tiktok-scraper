@@ -247,12 +247,12 @@ async function readColsAll(token, sheetId, startCol, endCol) {
   let out = [], s = 2;
   while (s < 500000) {
     const r = await feishuReq('GET',
-      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetId}!${startCol}${s}:${endCol}${s + 499}`, token);
+      `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetId}!${startCol}${s}:${endCol}${s + 999}`, token);
     const rows = r.data?.valueRange?.values || [];
     if (!rows.length) break;
     out = out.concat(rows);
-    if (rows.length < 500) break;
-    s += 500;
+    if (rows.length < 1000) break;
+    s += 1000;
   }
   return out;
 }

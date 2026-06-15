@@ -106,13 +106,13 @@ async function main() {
   async function walkSheet(cb) {
     let s = 2;
     while (s < 500000) {
-      const r = await feishu('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/uqJEhq!B${s}:N${s + 499}`, ft);
+      const r = await feishu('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/uqJEhq!B${s}:N${s + 999}`, ft);
       const rows = r.data?.valueRange?.values || []; if (!rows.length) break;
       rows.forEach((x, i) => {
         const d = x[2], nm = x[12];
         if (d && nm) cb(`${nm}|${d}`, pnum(x[3]), s + i, d);
       });
-      if (rows.length < 500) break; s += 500;
+      if (rows.length < 1000) break; s += 1000;
     }
   }
   const sheetSpend = {};

@@ -43,7 +43,7 @@ const median = arr => { const a = [...arr].sort((x, y) => x - y); return a.lengt
 
 async function readRows(token, sheet, a, b) {
   let out = [], s = 2;
-  while (s < 500000) { const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/${sheet}!${a}${s}:${b}${s + 499}?valueRenderOption=FormattedValue`, token); const rows = r.data?.valueRange?.values || []; if (!rows.length) break; out = out.concat(rows); if (rows.length < 500) break; s += 500; }
+  while (s < 500000) { const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/${sheet}!${a}${s}:${b}${s + 999}?valueRenderOption=FormattedValue`, token); const rows = r.data?.valueRange?.values || []; if (!rows.length) break; out = out.concat(rows); if (rows.length < 1000) break; s += 1000; }
   return out;
 }
 async function listTables(token) { return (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables?page_size=100`, token)).data?.items || []; }

@@ -20,7 +20,7 @@ jobs:
   ad-data:
     name: TT广告数据 (Marketing API)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
