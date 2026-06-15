@@ -294,9 +294,10 @@ async function clearTrailingCols(token, sheetId, fromColNum, rows) {
 }
 
 // 日经营数据汇总 — node 算静态值(按日期聚合),不写公式。
-async function ensureDailySummary(token) {
+async function ensureDailySummary(token, adRowsBT) {
   const header = await readHeader(token, SUMMARY_SHEET_ID);
-  const adsRows  = await readColsAll(token, 'uqJEhq', 'D', 'F');   // D日期 E消耗 F ROAS
+  // adRowsBT 是 B:AT 格式(D=idx2, E=idx3, F=idx4);无缓存时直接读 D:F
+  const adsRows = adRowsBT ? adRowsBT.map(r => [r[2], r[3], r[4]]) : await readColsAll(token, 'uqJEhq', 'D', 'F');
   const prodRows = await readColsAll(token, 'c50205', 'D', 'AB');  // D日期 E新增 … AB收入(idx24)
   const by = {};
   const g = d => (by[d] = by[d] || { spend: 0, rev: 0, rn: 0, nu: 0 });
@@ -366,7 +367,7 @@ async function getGroupMapping(token) {
 
 // node 算静态值:每行(日期×组),同日组按消耗降序。消耗=投放原表按 game→group 聚合;
 // 收入/新增=产品原表按项目组聚合;累计=组内按日期累加。无公式 → 源表变动不重算。
-async function ensureProjectSummary(token) {
+async function ensureProjectSummary(token, adRowsBT) {
   let header = await readHeader(token, PROJECT_SHEET_ID);
   const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI',
     '广告请求量', '广告曝光量', '广告点击量', '广告点击率', 'eCPM', '人均广告展示次数',
@@ -383,7 +384,7 @@ async function ensureProjectSummary(token) {
   }
   const { groups, gameToGroup } = await getGroupMapping(token);
   if (!groups.length) throw new Error('无项目组');
-  const adsRows  = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F_ROAS4 AT出价44
+  const adsRows  = adRowsBT || await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F_ROAS4 AT出价44
   const prodRows = await readColsAll(token, 'c50205', 'B', 'AB');  // B组0 D日期2 E新增3 AB收入26
 
   const by = {};  // "date|group" -> {sp,rn,rev,nu,mSp,mRn,aSp,aRn}
@@ -507,7 +508,7 @@ async function getAdProductInfo(token) {
 
 // node 算静态值:按(日期×游戏)聚合投放数据,消耗>0,日期降序+同日消耗降序。
 // 人均广告次数 = Σgross / Σengaged(engaged = gross/投放!I 反推)。无公式。
-async function ensureAdProductSummary(token) {
+async function ensureAdProductSummary(token, adRowsBT) {
   let header = await readHeader(token, AD_PRODUCT_SHEET_ID);
   // 表头维护:旧"项目累计*"改名"产品累计*";缺的追加
   const HDR_REN = { '项目累计消耗': '产品累计消耗', '项目累计收入': '产品累计收入', '项目累计ROI': '产品累计ROI' };
@@ -529,7 +530,7 @@ async function ensureAdProductSummary(token) {
     const m = /(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(str);
     return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5) + 25569 : null;
   };
-  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28 AT出价44
+  const ad = adRowsBT || await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28 AT出价44
   const prod = await readColsAll(token, 'c50205', 'C', 'AB'); // C游戏0 D日期1 … AB收入25
   const revMap = {};  // serial|game → 广告总收入(产品表)
   prod.forEach(r => { const s = serAny(r[1]); if (r[0] && s) revMap[`${s}|${r[0]}`] = pnum(r[25]); });
@@ -651,7 +652,7 @@ async function getAdMaterialInfo(token) {
 
 // node 算静态值:按(日期×创意素材)聚合,消耗>0,日期降序+消耗降序。组=素材所属
 // 游戏→组。展示量/点击率/CPM 从投放原表聚合。无公式。
-async function ensureAdMaterialSummary(token) {
+async function ensureAdMaterialSummary(token, adRowsBT) {
   let header = await readHeader(token, AD_MATERIAL_SHEET_ID);
   {
     const WANT_BID = ['手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI'];
@@ -664,7 +665,7 @@ async function ensureAdMaterialSummary(token) {
   }
   const { gameToGroup } = await getGroupMapping(token);
   const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
-  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I7 M素材11 X点击22 Y展示23 AD_gross28 AT出价44
+  const ad = adRowsBT || await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I7 M素材11 X点击22 Y展示23 AD_gross28 AT出价44
   const by = {};  // "date|material" -> {...}
   const c = (d, m, g) => { const k = `${d}|${m}`; const x = by[k] = by[k] || { sp: 0, rn: 0, act: 0, imp: 0, clk: 0, gross: 0, eng: 0, mSp: 0, mRn: 0, aSp: 0, aRn: 0, mat: m, date: d, game: '' }; if (g && !x.game) x.game = g; return x; };
   ad.forEach(r => {
@@ -736,11 +737,11 @@ async function getAdBidInfo(token) {
 
 // node 算静态值:按(日期×游戏×出价方式)聚合,消耗>0。排序=日期降序 → 游戏聚类
 // (按游戏总消耗) → 同游戏内出价按消耗降序。无公式。
-async function ensureAdBidSummary(token) {
+async function ensureAdBidSummary(token, adRowsBT) {
   const header = await readHeader(token, AD_BID_SHEET_ID);
   const { gameToGroup } = await getGroupMapping(token);
   const fullMap = { ...gameToGroup, ...EXTRA_GROUP_MAP };
-  const ad = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28 AT出价44
+  const ad = adRowsBT || await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 AD_gross28 AT出价44
   const by = {}, gameTot = {};  // by: date|game|bid ; gameTot: date|game → 总消耗
   const c = (d, g, b) => (by[`${d}|${g}|${b}`] = by[`${d}|${g}|${b}`] || { sp: 0, rn: 0, act: 0, gross: 0, eng: 0, game: g, date: d, bid: b });
   ad.forEach(r => {

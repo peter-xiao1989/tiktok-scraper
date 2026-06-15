@@ -1,37 +1,29 @@
-/**
- * Rewrite every formula-driven derived table to force Feishu to recalculate.
- *
- * Feishu spreadsheets do NOT auto-recalc formulas when their source data is
- * written via the API — the formulas hold a stale snapshot until rewritten.
- * So after each data import we re-emit the formulas (which triggers recalc).
- *
- * Called by both ads-api.js (07:00, after 投放 data) and product-api.js (16:00,
- * after 产品 data) so every table reflects the latest import promptly.
- *
- * Order matters: 项目维度经营表 first (the 日报表 sort key reads its day spend).
- */
-
 const { ensureProjectSummary, ensureDailySummary, ensureAdProductSummary,
-        ensureAdMaterialSummary, ensureAdBidSummary } = require('./build-summaries');
+        ensureAdMaterialSummary, ensureAdBidSummary, readColsAll } = require('./build-summaries');
 const { ensureReportFormulas } = require('./build-report');
 const { notifyFeishu, bjtStamp } = require('./notify');
 
-// label: 用于飞书告警标题(如「产品数据」「投放数据」)。每张衍生表独立 try/catch,
-// 一张失败不挡其他;跑完若有未更新的表,发一条「逐表清单」🟡 告警(下次导入会自动补)。
 async function maintainAllDerived(token, label = '数据') {
+  // 读 uqJEhq 一次,只取近 90 天,所有衍生表共享这份数据(避免重复全量扫)
+  const serAny = s => { const str = String(s ?? '').trim(); if (/^\d{5}(\.\d+)?$/.test(str)) return Math.round(+str); const m = /(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(str); return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5) + 25569 : null; };
+  const cutoff = Math.round(Date.now() / 864e5) + 25569 - 90;
+  const allAd = await readColsAll(token, 'uqJEhq', 'B', 'AT');
+  const adRows = allAd.filter(r => { const s = serAny(r[2]); return s && s >= cutoff; });
+  console.log(`  uqJEhq: 共${allAd.length}行, 近90天${adRows.length}行`);
+
   const steps = [
-    ['项目维度经营表', ensureProjectSummary],
-    ['产品经营日报表', ensureReportFormulas],
-    ['日经营数据汇总', ensureDailySummary],
-    ['投放日表-产品维度', ensureAdProductSummary],
-    ['投放日表-素材维度', ensureAdMaterialSummary],
-    ['投放日表-出价维度', ensureAdBidSummary],
+    ['项目维度经营表',   () => ensureProjectSummary(token, adRows)],
+    ['产品经营日报表',   () => ensureReportFormulas(token, adRows)],
+    ['日经营数据汇总',   () => ensureDailySummary(token, adRows)],
+    ['投放日表-产品维度', () => ensureAdProductSummary(token, adRows)],
+    ['投放日表-素材维度', () => ensureAdMaterialSummary(token, adRows)],
+    ['投放日表-出价维度', () => ensureAdBidSummary(token, adRows)],
   ];
   const results = [];
-  for (const [name, fn] of steps) {
+  for (const [name, thunk] of steps) {
     try {
       console.log(`Maintaining ${name}...`);
-      await fn(token);
+      await thunk();
       results.push({ name, ok: true });
     } catch (e) {
       console.warn(`[warn] ${name} maintenance: ${e.message}`);

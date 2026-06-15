@@ -254,7 +254,7 @@ async function applyFilter(token, targetRow, showCol) {
 // node 算静态值:行=(游戏×日期),保留消耗>0或收入>0的行。投放侧聚合投放原表,
 // 产品侧取产品原表对应(游戏,日期)行。排序=日期降序 → 组消耗降序 → 组内游戏消耗
 // 降序。无公式、无 filter、无 helper 列 → 源表变动不触发重算。
-async function ensureReportFormulas(token) {
+async function ensureReportFormulas(token, adRowsBT) {
   const { applyColumnFormats, getGroupMapping, getProductDateInfo, readColsAll,
           writeStaticGrid, clearTrailingCols, dateToSerial, pnum, ppct } = require('./build-summaries');
   let header = await readHeader(token);
@@ -274,7 +274,7 @@ async function ensureReportFormulas(token) {
   const gameList = [];
   for (const grp of groups) for (const g of groupGames[grp]) gameList.push(g);
 
-  const adRows   = await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 X点击22 Y展示23 AD_gross28 AT出价44
+  const adRows   = adRowsBT || await readColsAll(token, 'uqJEhq', 'B', 'AT');  // B游戏0 D日期2 E消耗3 F4 G活跃度5 I人均次数7 X点击22 Y展示23 AD_gross28 AT出价44
   const prodRows = await readColsAll(token, 'c50205', 'C', 'AB');  // C游戏0 D日期1 E新增2 F活跃3 K进入8 L时长9 N启速11 O首启12 P启成率13 Y点击率22 Z_eCPM23 AA人均展示24 AB收入25
 
   const ag = {}, byGroup = {};  // ag: game|date→{sp,rn,act}; byGroup: group|date→总消耗
