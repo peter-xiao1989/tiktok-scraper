@@ -37,7 +37,7 @@ async function syncProject(token, GROUP, QZ) {
   const TABLE = `${GROUP}-经营日报(每日)`;
   // 读 JIKPZV 全表(FormattedValue)
   let grid = [], s = 1;
-  while (s < 2000) {
+  while (s < 500000) {
     const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/JIKPZV!A${s}:AZ${s + 499}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
     grid = grid.concat(vs); if (vs.length < 500) break; s += 500;

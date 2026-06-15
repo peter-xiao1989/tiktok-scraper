@@ -245,7 +245,7 @@ const ppct = v => { const s = String(v == null ? '' : v); return s.includes('%')
 // 读 sheet 从 startCol 到 endCol 的所有数据行(行2起,分批)。
 async function readColsAll(token, sheetId, startCol, endCol) {
   let out = [], s = 2;
-  while (s < 6000) {
+  while (s < 500000) {
     const r = await feishuReq('GET',
       `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetId}!${startCol}${s}:${endCol}${s + 499}`, token);
     const rows = r.data?.valueRange?.values || [];

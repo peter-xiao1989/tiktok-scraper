@@ -78,7 +78,7 @@ const serMs = v => {
 
 async function readGrid(token, sheet) {
   let rows = [], s = 1;
-  while (s < 6000) {
+  while (s < 500000) {
     const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/${sheet}!A${s}:BZ${s + 499}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
     rows = rows.concat(vs); if (vs.length < 500) break; s += 500;

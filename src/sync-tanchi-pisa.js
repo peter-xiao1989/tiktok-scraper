@@ -35,7 +35,7 @@ const serAny = s => { const str = String(s == null ? '' : s).trim(); if (/^\d{5}
 async function syncProject(token, GROUP, QZ) {
   const TABLE = `${GROUP}-经营日报(每日)`;
   let grid = [], s = 1;
-  while (s < 2000) {
+  while (s < 500000) {
     const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/JIKPZV!A${s}:AZ${s + 499}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
     grid = grid.concat(vs); if (vs.length < 500) break; s += 500;
@@ -88,7 +88,7 @@ async function syncProject(token, GROUP, QZ) {
 
   // ── 包体日报 ──────────────────────────────────────────────────────────
   let g2 = [], s2 = 1;
-  while (s2 < 2000) {
+  while (s2 < 500000) {
     const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/6B1PVx!A${s2}:V${s2 + 499}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
     g2 = g2.concat(vs); if (vs.length < 500) break; s2 += 500;
