@@ -66,7 +66,9 @@ async function browserLogin() {
     await page.locator('input[placeholder="Email"]').fill(EMAIL);
     await page.locator('input[placeholder="Password"]').fill(PASSWORD);
     await page.locator('button[type="submit"]').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('button[type="submit"]').click();
+    // Screenshot before click to debug blocking overlays
+    await page.screenshot({ path: path.join(__dirname, '../data/before-click.png'), fullPage: true }).catch(() => {});
+    await page.locator('button[type="submit"]').click({ timeout: 30000, force: true });
 
     // Wait up to 20s for redirect. If still on /login, assume email verification.
     const redirected = await page
