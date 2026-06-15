@@ -1,13 +1,16 @@
 /**
  * 复制枪战 base → 监狱经营数据中心
- * 1. 调用 Drive API 复制整个 base（含仪表盘）
- * 2. 把表名 枪战-* 改成 监狱-*
- * 3. 输出新 base token，设为 JIANYU_BASE secret 后重跑 daily-reports 填数据
+ * 1. 找到用户自己 base 的父文件夹（这样复制出的 base 在用户空间里，用户有权限）
+ * 2. 把枪战 base 复制进那个文件夹（含仪表盘）
+ * 3. 把表名 枪战-* 改成 监狱-*
+ * 4. 输出新 base token，更新 JIANYU_BASE secret 后重跑 daily-reports 填数据
  */
 const https = require('https');
 const { getFeishuToken } = require('../src/build-summaries');
 
 const QIANGZHAN_BASE = 'X89dbn5DZaYhMqsjcE1cZv3snD4';
+// 用户自己有权限的 base，用来找目标文件夹
+const USER_BASE = process.env.JIANYU_BASE || 'VfIVbeCdSaqJ2xspWXtcNtGNnFg';
 
 function req(m, p, t, b) {
   return new Promise((res, rej) => {
@@ -29,18 +32,26 @@ function req(m, p, t, b) {
 async function main() {
   const token = await getFeishuToken();
 
-  // 0. 获取根目录 folder_token
-  const rootMeta = await req('GET', '/open-apis/drive/explorer/v2/root_folder/meta', token);
-  const folderToken = rootMeta.data?.token;
-  if (!folderToken) { console.error('Cannot get root folder:', JSON.stringify(rootMeta)); process.exit(1); }
-  console.log('Root folder token:', folderToken);
+  // 0. 查用户 base 的父文件夹
+  console.log('Getting parent folder of user base...');
+  const meta = await req('POST', '/open-apis/drive/v1/metas/batch_query', token, {
+    request_docs: [{ doc_token: USER_BASE, doc_type: 'bitable' }],
+    with_url: false,
+  });
+  const parentToken = meta.data?.metas?.[0]?.parent_token;
+  console.log('Meta result:', JSON.stringify(meta.data?.metas?.[0]));
+  if (!parentToken) {
+    console.error('Cannot get parent folder. Full response:', JSON.stringify(meta));
+    process.exit(1);
+  }
+  console.log('Parent folder token:', parentToken);
 
-  // 1. 复制 枪战 base
-  console.log('Copying 枪战 base...');
+  // 1. 复制枪战 base 进用户文件夹
+  console.log('Copying 枪战 base into user folder...');
   const copy = await req('POST', `/open-apis/drive/v1/files/${QIANGZHAN_BASE}/copy`, token, {
     name: '监狱经营数据中心',
     type: 'bitable',
-    folder_token: folderToken,
+    folder_token: parentToken,
   });
 
   if (copy.code !== 0) {
@@ -51,8 +62,8 @@ async function main() {
   const newToken = copy.data?.file?.token;
   console.log(`New base token: ${newToken}`);
 
-  // 等待 Feishu 后台处理完成
-  await new Promise(r => setTimeout(r, 5000));
+  // 等待 Feishu 处理
+  await new Promise(r => setTimeout(r, 6000));
 
   // 2. 列出新 base 的所有表
   const tbls = await req('GET', `/open-apis/bitable/v1/apps/${newToken}/tables?page_size=100`, token);
