@@ -105,7 +105,7 @@ async function main() {
   // 表内:账户×日 合计(walk 返回总和;cb 可拿到行号做删除定位)
   async function walkSheet(cb) {
     let s = 2;
-    while (s < 20000) {
+    while (s < 500000) {
       const r = await feishu('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/uqJEhq!B${s}:N${s + 499}`, ft);
       const rows = r.data?.valueRange?.values || []; if (!rows.length) break;
       rows.forEach((x, i) => {

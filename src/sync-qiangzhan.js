@@ -94,7 +94,7 @@ async function syncProject(token, GROUP, QZ) {
 
   // ── 枪战-包体日报(每日):6B1PVx 枪战行,近30天 ──
   let g2 = [], s2 = 1;
-  while (s2 < 2000) {
+  while (s2 < 500000) {
     const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/6B1PVx!A${s2}:V${s2 + 499}?valueRenderOption=FormattedValue`, token);
     const vs = r.data?.valueRange?.values || []; if (!vs.length) break;
     g2 = g2.concat(vs); if (vs.length < 500) break; s2 += 500;
