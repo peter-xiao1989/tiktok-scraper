@@ -18,7 +18,8 @@
     "audit-product": "node src/audit-product.js",
     "diag": "node src/diag.js",
     "sync-tanchi-pisa": "node src/sync-tanchi-pisa.js",
-    "export-cookies": "node scripts/export-cookies.js"
+    "export-cookies": "node scripts/export-cookies.js",
+    "copy-jianyu-base": "node scripts/copy-jianyu-base.js"
   },
   "keywords": [],
   "author": "",
