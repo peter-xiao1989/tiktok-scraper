@@ -17,7 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  ad-data:
+  # Job 1: 拉取投放数据 + 重算衍生表 + 对账。独立超时 90 分钟。
+  # ads-api 读写 9000+ 行约需 60-70 分钟,与 sync-bitable 分开后各有独立计时,
+  # 不会再出现"ads-api 跑太久把 sync-bitable 挤掉"的问题。
+  ads-pull:
     name: TT广告数据 (Marketing API)
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -70,9 +73,35 @@ jobs:
           AUTO_REPAIR: '1'
         run: node src/audit-ads.js
 
-      # 导入完成后立即同步多维表(串联保证时序:数据先落地,同步在后)
+      - name: Notify failure to Feishu
+        if: failure()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          [ -z "$FEISHU_WEBHOOK" ] && echo "no FEISHU_WEBHOOK configured, skip" && exit 0
+          BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 投放数据·拉取/对账失败 ($BJT BJT)\n$URL\"}}"
+
+  # Job 2: 同步多维表。需要 ads-pull 成功后才启动,有独立 60 分钟超时。
+  # 与 ads-pull 完全解耦 — ads-pull 无论跑多久,sync-bitable 都有完整的 60 分钟。
+  sync-bitable:
+    name: 同步多维表
+    needs: ads-pull
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
       - name: Sync Base (多维表)
-        continue-on-error: true
         env:
           FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
@@ -89,4 +118,4 @@ jobs:
           BJT=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
           URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
-            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 投放数据·核心抓取/导入失败 ($BJT BJT)\n$URL\"}}"
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 多维表同步失败 ($BJT BJT)\n$URL\"}}"

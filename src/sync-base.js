@@ -49,7 +49,7 @@ function once(method, path, token, body) {
     const h = { 'Content-Type': 'application/json' };
     if (token) h.Authorization = 'Bearer ' + token;
     if (d) h['Content-Length'] = Buffer.byteLength(d);
-    const r = https.request({ hostname: 'open.feishu.cn', path, method, headers: h, timeout: 25000 }, rs => {
+    const r = https.request({ hostname: 'open.feishu.cn', path, method, headers: h, timeout: 45000 }, rs => {
       const c = []; rs.on('data', x => c.push(x));
       rs.on('end', () => { const raw = Buffer.concat(c).toString('utf8'); try { res(JSON.parse(raw)); } catch (e) { res({ _nonjson: raw.slice(0, 100) }); } });
     });
@@ -58,10 +58,12 @@ function once(method, path, token, body) {
   });
 }
 async function api(method, path, token, body) {
-  const wait = a => new Promise(s => setTimeout(s, Math.min(8000, 400 * 2 ** a) + Math.random() * 300));
+  const wait = a => new Promise(s => setTimeout(s, Math.min(12000, 600 * 2 ** a) + Math.random() * 500));
   for (let a = 0; ; a++) {
-    let r; try { r = await once(method, path, token, body); } catch (e) { if (a >= 7) throw e; await wait(a); continue; }
-    if (r && [1254290, 1254291, 90217, 90235].includes(r.code) && a < 7) { await wait(a); continue; }
+    let r; try { r = await once(method, path, token, body); } catch (e) { if (a >= 8) throw e; await wait(a); continue; }
+    // HTML 响应 = Feishu 限流/502/503,必须重试
+    if (r && r._nonjson !== undefined && a < 8) { await wait(a); continue; }
+    if (r && [1254290, 1254291, 90217, 90235].includes(r.code) && a < 8) { await wait(a); continue; }
     return r;
   }
 }

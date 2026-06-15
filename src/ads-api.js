@@ -338,7 +338,7 @@ async function getExistingKeys(token) {
   const rowKeys = new Set();
   let startRow = 2;
   while (true) {
-    const endRow = startRow + 499;
+    const endRow = startRow + 999;
     // Read B..S (18 cols): B游戏0 C系列1 D按天2 M素材11 N账户12 Q广告组15 S广告名17
     const rows = await readSheetRange(ADS_SHEET_ID, `B${startRow}:S${endRow}`, token);
     if (!rows.length) break;
@@ -355,8 +355,8 @@ async function getExistingKeys(token) {
     }
     if (!hasData) break;  // reached empty region beyond actual data
     process.stdout.write(`\r  read ${startRow + rows.length - 2} rows...`);
-    if (rows.length < 500) break;
-    startRow += 500;
+    if (rows.length < 1000) break;
+    startRow += 1000;
   }
   process.stdout.write('\n');
   return { dayKeys, rowKeys };
