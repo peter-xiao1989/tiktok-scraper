@@ -2,10 +2,7 @@ name: Daily Ad Data (07:00 BJT)
 
 on:
   schedule:
-    # Off-peak minutes (avoid :00 global congestion) + a backup fire. ads-api
-    # dedups by account|date, so a duplicate run is harmless.
     - cron: '17 23 * * *'   # 07:17 BJT
-    - cron: '47 23 * * *'   # 07:47 BJT (backup)
   workflow_dispatch:
     inputs:
       target_date:

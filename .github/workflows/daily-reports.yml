@@ -2,9 +2,8 @@ name: Daily Reports (投放8:00 / 产品16:30)
 
 on:
   schedule:
-    # 投放日报:UTC 00:10 = 北京 08:10(投放数据 7:00 导入后)
-    - cron: '10 0 * * *'
     # 产品日报:UTC 08:40 = 北京 16:40(产品数据 16:00 导入后)
+    # 投放多维表由 daily-ads 的 sync-bitable job 负责,不再在此重跑
     - cron: '40 8 * * *'
   workflow_dispatch:
     inputs:
