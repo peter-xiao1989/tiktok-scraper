@@ -83,6 +83,7 @@ jobs:
         env:
           FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          JIANYU_BASE:       ${{ secrets.JIANYU_BASE }}
         run: node src/sync-base.js chanpin
 
       - name: Upload debug screenshots

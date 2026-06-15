@@ -10,6 +10,7 @@ const PROJECTS = [
   { group: '枪战', base: 'X89dbn5DZaYhMqsjcE1cZv3snD4' },
   { group: '齿轮', base: 'WzfObSESya7fo0sKO9Hc8zernBh' },
   { group: '战车', base: 'WzfObSESya7fo0sKO9Hc8zernBh' },
+  { group: '监狱', base: process.env.JIANYU_BASE || '' },
 ];
 const SKIP_COLS = new Set(['序号', '手动出价消耗', '手动出价ROI', '自动出价消耗', '自动出价ROI']);
 const RENAME = { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' };
@@ -170,7 +171,18 @@ async function syncProject(token, GROUP, QZ) {
 }
 async function main() {
   const token = await getFeishuToken();
-  for (const { group, base } of PROJECTS) await syncProject(token, group, base);
+  for (const { group, base } of PROJECTS) {
+    if (!base) {
+      const r = await api('POST', '/open-apis/bitable/v1/apps', token, { app: { name: `${group}经营数据中心` } });
+      const tok = r.data?.app?.app_token;
+      if (!tok) throw new Error(`创建 ${group} base 失败: ${JSON.stringify(r).slice(0, 200)}`);
+      console.log(`\n✅ 新建「${group}」base 成功！`);
+      console.log(`app_token: ${tok}`);
+      console.log(`请设置 GitHub Secret: JIANYU_BASE = ${tok}\n`);
+      continue;
+    }
+    await syncProject(token, group, base);
+  }
 }
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
 module.exports = { main };
