@@ -54,10 +54,14 @@ function buildRecords(wsRows, jkRows) {
     if (!x[0] || !x[1]) return;
     (byDateGrp[x[1]] = byDateGrp[x[1]] || []).push({ grp: x[0], sp: pnum(x[2]), rev: pnum(x[3]), cumRoi: ppct(x[7]) });
   });
-  // 日经营: A日期 B消耗 C收入 D当日ROAS E累计消耗 F累计收入 G累计ROI H新增
+  // 日经营: A日期 B消耗 C收入 D当日ROAS E(废弃) F(废弃) G(废弃) H新增
+  // 累计ROI 在此从每日数据自行计算(wAsSso 不再存累计列)
   const days = wsRows.filter(x => x[0] && ser(x[0]))
-    .map(x => ({ date: x[0], sp: pnum(x[1]), rev: pnum(x[2]), adRoas: ppct(x[3]), cumROI: ppct(x[6]), nu: pnum(x[7]) }))
+    .map(x => ({ date: x[0], sp: pnum(x[1]), rev: pnum(x[2]), adRoas: ppct(x[3]), nu: pnum(x[7]) }))
     .sort((a, b) => ser(b.date) - ser(a.date));
+  // 从旧到新累加算全局累计ROI
+  let cumSp = 0, cumRev = 0;
+  [...days].reverse().forEach(d => { cumSp += d.sp; cumRev += d.rev; d.cumROI = cumSp ? cumRev / cumSp : 0; });
 
   return days.map((d, i) => {
     const prev = days[i + 1];
@@ -130,7 +134,8 @@ async function clearRecords(token, tid) {
 
 async function main() {
   const token = await getFeishuToken();
-  const [ws, jk] = await Promise.all([readSheet(token, 'wAsSso!A2:H500'), readSheet(token, 'JIKPZV!B2:I500')]);
+  // wAsSso 读全部(累计ROI 需要从第1天累加);行数随时间增长但远小于 uqJEhq
+  const [ws, jk] = await Promise.all([readSheet(token, 'wAsSso!A2:H2000'), readSheet(token, 'JIKPZV!B2:I2000')]);
   const recs = buildRecords(ws, jk);
   if (!recs.length) { console.log('无数据'); return; }
 

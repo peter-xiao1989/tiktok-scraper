@@ -305,22 +305,17 @@ async function ensureDailySummary(token, adRowsBT) {
   prodRows.forEach(r => { const d = r[0]; if (!d) return; g(d).nu += pnum(r[1]); g(d).rev += pnum(r[24]); });
 
   const dates = Object.keys(by).filter(d => dateToSerial(d)).sort((a, b) => dateToSerial(b) - dateToSerial(a));
-  // 累计:从旧到新累加
-  const cum = {}; let cS = 0, cR = 0;
-  [...dates].reverse().forEach(d => { cS += by[d].spend; cR += by[d].rev; cum[d] = { s: cS, r: cR }; });
-
+  // 累计ROI 已移到 build-overview.js 计算(避免每次全量扫 uqJEhq)
   const r1 = v => Math.round(v * 10) / 10;
   const cellOf = (name, d) => {
-    const x = by[d], c = cum[d];
+    const x = by[d];
     switch (name) {
       case '统计周期': return dateToSerial(d);
       case '消耗': return r1(x.spend);
       case '广告总收入': return r1(x.rev);
       case '当日广告收入 ROAS (TikTok)':
-      case '广告收入 ROAS (TikTok)': return x.spend ? x.rn / x.spend : '';   // 原值,0.00% 格式显示
-      case '累计消耗': return r1(c.s);
-      case '累计收入': return r1(c.r);
-      case 'TT累计ROI': return c.s ? c.r / c.s : '';
+      case '广告收入 ROAS (TikTok)': return x.spend ? x.rn / x.spend : '';
+      case '累计消耗': case '累计收入': case 'TT累计ROI': return '';  // 已废弃,留空
       case '新增用户': return Math.round(x.nu);
       default: return '';
     }
