@@ -9,8 +9,8 @@ const https = require('https');
 const { getFeishuToken } = require('../src/build-summaries');
 
 const QIANGZHAN_BASE = 'X89dbn5DZaYhMqsjcE1cZv3snD4';
-// 用户自己有权限的 base，用来找目标文件夹
-const USER_BASE = process.env.JIANYU_BASE || 'VfIVbeCdSaqJ2xspWXtcNtGNnFg';
+// 从 batch_query meta 里得到的用户 open_id
+const USER_OPEN_ID = 'ou_d7ea3ebd5966b4a30661d52f53e72894';
 
 function req(m, p, t, b) {
   return new Promise((res, rej) => {
@@ -32,26 +32,18 @@ function req(m, p, t, b) {
 async function main() {
   const token = await getFeishuToken();
 
-  // 0. 查用户 base 的父文件夹
-  console.log('Getting parent folder of user base...');
-  const meta = await req('POST', '/open-apis/drive/v1/metas/batch_query', token, {
-    request_docs: [{ doc_token: USER_BASE, doc_type: 'bitable' }],
-    with_url: false,
-  });
-  const parentToken = meta.data?.metas?.[0]?.parent_token;
-  console.log('Meta result:', JSON.stringify(meta.data?.metas?.[0]));
-  if (!parentToken) {
-    console.error('Cannot get parent folder. Full response:', JSON.stringify(meta));
-    process.exit(1);
-  }
-  console.log('Parent folder token:', parentToken);
+  // 0. 获取 bot 根目录（用于复制目标）
+  const rootMeta = await req('GET', '/open-apis/drive/explorer/v2/root_folder/meta', token);
+  const folderToken = rootMeta.data?.token;
+  if (!folderToken) { console.error('Cannot get root folder:', JSON.stringify(rootMeta)); process.exit(1); }
+  console.log('Root folder token:', folderToken);
 
-  // 1. 复制枪战 base 进用户文件夹
-  console.log('Copying 枪战 base into user folder...');
+  // 1. 复制枪战 base
+  console.log('Copying 枪战 base...');
   const copy = await req('POST', `/open-apis/drive/v1/files/${QIANGZHAN_BASE}/copy`, token, {
     name: '监狱经营数据中心',
     type: 'bitable',
-    folder_token: parentToken,
+    folder_token: folderToken,
   });
 
   if (copy.code !== 0) {
@@ -61,6 +53,14 @@ async function main() {
 
   const newToken = copy.data?.file?.token;
   console.log(`New base token: ${newToken}`);
+
+  // 2. 把用户加为管理员（用 open_id）
+  const perm = await req('POST', `/open-apis/drive/v1/permissions/${newToken}/members?type=bitable&need_notification=false`, token, {
+    member_type: 'openid',
+    member_id: USER_OPEN_ID,
+    perm: 'full_access',
+  });
+  console.log('Add owner:', perm.code === 0 ? '✅ 用户已加为管理员' : JSON.stringify(perm));
 
   // 等待 Feishu 处理
   await new Promise(r => setTimeout(r, 6000));
