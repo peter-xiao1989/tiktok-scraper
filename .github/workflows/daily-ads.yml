@@ -46,9 +46,10 @@ jobs:
           # dedup 在请求前跳过已导入的账户日 → 只有缺失的才真正拉取(成本≈0),
           # run 失败/账户晚授权/新账户历史 都会被后续天数自动补回。
           if [ -z "$TARGET_DATE" ]; then
-            DAYS_BACK=7; [ "$(date -u +%u)" = "7" ] && DAYS_BACK=30
-            export START_DATE=$(date -u -d "-$DAYS_BACK days" +%F)
-            export END_DATE=$(date -u -d "-1 day" +%F)
+            # 用北京时间算日期:07:17 BJT = 23:17 UTC 前一天,若用 UTC -1day 会少一天
+            DAYS_BACK=7; [ "$(TZ=Asia/Shanghai date +%u)" = "7" ] && DAYS_BACK=30
+            export START_DATE=$(TZ=Asia/Shanghai date -d "-$DAYS_BACK days" +%F)
+            export END_DATE=$(TZ=Asia/Shanghai date -d "-1 day" +%F)
             echo "self-heal window: $START_DATE ~ $END_DATE"
           fi
           npm run ads-api

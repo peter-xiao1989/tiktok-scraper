@@ -130,7 +130,7 @@ async function clearRecords(token, tid) {
 
 async function main() {
   const token = await getFeishuToken();
-  const [ws, jk] = await Promise.all([readSheet(token, 'wAsSso!A2:H80'), readSheet(token, 'JIKPZV!B2:I500')]);
+  const [ws, jk] = await Promise.all([readSheet(token, 'wAsSso!A2:H500'), readSheet(token, 'JIKPZV!B2:I500')]);
   // 只保留近30天(驾驶舱趋势图读全表→自动近30天窗口;完整历史在电子表格/数据月报)
   const recs = buildRecords(ws, jk).slice(0, 30);
   if (!recs.length) { console.log('无数据'); return; }

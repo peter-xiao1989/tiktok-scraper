@@ -1,0 +1,17 @@
+name: Diag Jianyu Spend (one-time)
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Run diagnostic
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: node scripts/diag-jianyu-spend.js
