@@ -35,7 +35,30 @@ const UPSERT_KEY = {
   '【投放日报】-素材维度':  ['按天', '项目组', '创意素材名称'],
   '【投放日报】-出价维度':  ['按天', '项目组'],
 };
-const SKIP = new Set(['序号', '类别']);
+const SKIP = new Set([
+  '序号', '类别',
+  // 已从电子表格废弃的累计列(移到 Bitable formula 字段)
+  '累计消耗', '累计收入', 'TT累计ROI',
+  '项目累计消耗', '项目累计收入', '项目累计ROI',
+  '项目累计新增用户', '历史平均活跃成本',
+  '产品累计消耗', '产品累计收入', '产品累计ROI',
+]);
+// 在 Bitable 里用公式字段计算的累计列(电子表格不再存值)
+const FORMULA_FIELDS = {
+  '日经营数据汇总': [
+    { field_name: '累计ROI', formula: 'IF(SUMIF([统计周期],"<="&[统计周期],[消耗])=0,"",SUMIF([统计周期],"<="&[统计周期],[收入])/SUMIF([统计周期],"<="&[统计周期],[消耗]))' },
+    { field_name: '累计消耗', formula: 'SUMIF([统计周期],"<="&[统计周期],[消耗])' },
+    { field_name: '累计收入', formula: 'SUMIF([统计周期],"<="&[统计周期],[收入])' },
+  ],
+  '【经营日报】-项目维度': [
+    { field_name: '累计ROI', formula: 'IF(SUMIFS([消耗],[项目组],[项目组],[统计周期],"<="&[统计周期])=0,"",SUMIFS([收入],[项目组],[项目组],[统计周期],"<="&[统计周期])/SUMIFS([消耗],[项目组],[项目组],[统计周期],"<="&[统计周期]))' },
+    { field_name: '累计新增用户', formula: 'SUMIFS([新增用户],[项目组],[项目组],[统计周期],"<="&[统计周期])' },
+  ],
+  '【投放日报】-产品维度': [
+    { field_name: '产品累计ROI', formula: 'IF(SUMIFS([消耗],[游戏名称],[游戏名称],[按天],"<="&[按天])=0,"",SUMIFS([广告总收入],[游戏名称],[游戏名称],[按天],"<="&[按天])/SUMIFS([消耗],[游戏名称],[游戏名称],[按天],"<="&[按天]))' },
+    { field_name: '产品累计消耗', formula: 'SUMIFS([消耗],[游戏名称],[游戏名称],[按天],"<="&[按天])' },
+  ],
+};
 // 多维表字段显示名重命名(值和来源不变,只改多维表里的列名)。key=多维表名。
 const RENAME = {
   '日经营数据汇总': { '广告总收入': '收入', '广告收入 ROAS (TikTok)': '广告首日ROI' },
@@ -167,6 +190,15 @@ async function syncTable(token, sheet, name, tables) {
   if (reqCol) { const ri = header.indexOf(reqCol); if (ri >= 0) data = data.filter(r => r[ri]); }
   if (!data.length) { console.log(`  ${name}: 无数据行,跳过`); return; }
 
+  // 列类型: 日期 / 百分比 / 数值 / 文本
+  const kind = header.map((h, k) => {
+    if (DATE_COLS.has(h)) return 'date';
+    if (isPctCol(h)) return 'pct';
+    const vals = data.map(r => r[k]).filter(v => v);
+    if (vals.length && vals.filter(v => /^-?[\d.,%]+$/.test(v)).length / vals.length >= 0.8) return 'num';
+    return 'text';
+  });
+
   // 汇总首行:数值列求和、pct 列留空(ROI 加权无意义)、日期列取最新、项目组/素材名写"汇总"
   if (SUMMARY_FIRST.has(name)) {
     const sumRow = header.map((h, k) => {
@@ -177,15 +209,6 @@ async function syncTable(token, sheet, name, tables) {
     });
     data = [sumRow, ...data];
   }
-
-  // 列类型: 日期 / 百分比 / 数值 / 文本
-  const kind = header.map((h, k) => {
-    if (DATE_COLS.has(h)) return 'date';
-    if (isPctCol(h)) return 'pct';
-    const vals = data.map(r => r[k]).filter(v => v);
-    if (vals.length && vals.filter(v => /^-?[\d.,%]+$/.test(v)).length / vals.length >= 0.8) return 'num';
-    return 'text';
-  });
   const fields = header.map((h, k) => ({ field_name: h, type: kind[k] === 'date' ? 5 : (kind[k] === 'num' || kind[k] === 'pct') ? 2 : 1 }));
 
   // 复用同名表(清记录),保持 table_id 稳定 → 仪表盘图表不失效。没有才建。
@@ -197,11 +220,23 @@ async function syncTable(token, sheet, name, tables) {
     tid = old.table_id;
     if (!isUpsert) await clearRecords(token, tid);
     // 自动补缺字段(电子表格新增列时多维表跟着加,否则写入报未知字段)
-    const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
+    const existFields = (await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=100`, token)).data?.items || [];
+    const exist = new Set(existFields.map(x => x.field_name));
     for (const f of fields) {
       if (exist.has(f.field_name)) continue;
       const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields`, token, { field_name: f.field_name, type: f.type });
       console.log(`  ${name}: 补字段「${f.field_name}」${r.code === 0 ? '✅' : '❌' + r.code}`);
+      if (r.code === 0) exist.add(f.field_name);
+    }
+    // 补公式字段(累计类指标从电子表格移到 Bitable formula 计算)
+    const formulaDefs = FORMULA_FIELDS[name];
+    if (formulaDefs) {
+      for (const { field_name, formula } of formulaDefs) {
+        if (exist.has(field_name)) continue;
+        const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields`, token,
+          { field_name, type: 20, property: { formula_expression: formula } });
+        console.log(`  ${name}: 补公式字段「${field_name}」${r.code === 0 ? '✅' : '❌' + r.code}`);
+      }
     }
   }
   else {

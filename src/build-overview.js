@@ -48,12 +48,33 @@ async function readSheet(token, range) {
 }
 
 function buildRecords(wsRows, jkRows) {
-  // 项目维度: B组 C日期 D消耗 E收入 I累计ROI(idx0..7)
+  // 项目维度: B组 C日期 D消耗 E收入(后面的累计列已废弃)
+  // 先按组累加算组级累计ROI(从旧到新)
+  const grpData = {};  // grp → [{serial, sp, rev}]
+  jkRows.forEach(x => {
+    if (!x[0] || !x[1]) return;
+    const s = ser(x[1]) || pnum(x[1]);  // C列写的是 serial 数字
+    if (!s) return;
+    (grpData[x[0]] = grpData[x[0]] || []).push({ serial: s, sp: pnum(x[2]), rev: pnum(x[3]) });
+  });
+  // 每组按日期升序累加 → grpCumRoi["grp|serial"] = cumRoi
+  const grpCumRoi = {};
+  for (const [grp, entries] of Object.entries(grpData)) {
+    entries.sort((a, b) => a.serial - b.serial);
+    let cs = 0, cr = 0;
+    for (const e of entries) { cs += e.sp; cr += e.rev; grpCumRoi[`${grp}|${e.serial}`] = cs ? cr / cs : 0; }
+  }
+  // byDateGrp: serial(string) → [{grp, sp, rev, cumRoi}]
   const byDateGrp = {};
   jkRows.forEach(x => {
     if (!x[0] || !x[1]) return;
-    (byDateGrp[x[1]] = byDateGrp[x[1]] || []).push({ grp: x[0], sp: pnum(x[2]), rev: pnum(x[3]), cumRoi: ppct(x[7]) });
+    const s = ser(x[1]) || pnum(x[1]);
+    if (!s) return;
+    const key = String(s);
+    const cumRoi = grpCumRoi[`${x[0]}|${s}`] || 0;
+    (byDateGrp[key] = byDateGrp[key] || []).push({ grp: x[0], sp: pnum(x[2]), rev: pnum(x[3]), cumRoi });
   });
+
   // 日经营: A日期 B消耗 C收入 D当日ROAS E(废弃) F(废弃) G(废弃) H新增
   // 累计ROI 在此从每日数据自行计算(wAsSso 不再存累计列)
   const days = wsRows.filter(x => x[0] && ser(x[0]))
@@ -68,7 +89,7 @@ function buildRecords(wsRows, jkRows) {
     const dayRoi = d.sp ? d.rev / d.sp : 0;
     const spChg = prev && prev.sp ? (d.sp - prev.sp) / prev.sp : null;
     const pending = d.rev <= 0 && d.sp > 0;            // 产品收入未结算
-    const grps = byDateGrp[d.date] || [];
+    const grps = byDateGrp[String(ser(d.date))] || [];
     const active = grps.filter(g => g.sp > 0);
     const top = [...grps].sort((a, b) => b.sp - a.sp)[0];
 

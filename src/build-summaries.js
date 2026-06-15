@@ -37,10 +37,10 @@ function feishuReqOnce(method, path, token, body) {
     const data = body ? JSON.stringify(body) : null;
     const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
     if (data) headers['Content-Length'] = Buffer.byteLength(data);
-    const req = https.request({ hostname: 'open.feishu.cn', path, method, headers, timeout: 30000 },
+    const req = https.request({ hostname: 'open.feishu.cn', path, method, headers, timeout: 45000 },
       res => { const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => {
         const d = Buffer.concat(chunks).toString('utf8');  // concat before decode (multibyte-safe)
-        try { resolve(JSON.parse(d)); } catch (e) { reject(new Error(`non-JSON: ${d.slice(0, 200)}`)); }
+        try { resolve(JSON.parse(d)); } catch (e) { resolve({ _nonjson: d.slice(0, 200) }); }
       }); });
     req.on('timeout', () => { req.destroy(); reject(new Error(`timeout: ${path}`)); });
     req.on('error', reject);
@@ -50,13 +50,15 @@ function feishuReqOnce(method, path, token, body) {
 
 async function feishuReq(method, path, token, body) {
   // Retry on rate-limit (90217 too many request / 90235 data not ready) + transient
-  // network errors. Exponential backoff + jitter, cap ~15s, up to 10 tries (~1min
-  // total) so a longer rate-limit window doesn't drop a write.
+  // network errors (incl. HTML 502/503 responses). Exponential backoff + jitter,
+  // cap ~15s, up to 10 tries (~1min total).
   const wait = a => new Promise(s => setTimeout(s, Math.min(15000, 500 * 2 ** a) + Math.random() * 500));
   for (let attempt = 0; ; attempt++) {
     let r;
     try { r = await feishuReqOnce(method, path, token, body); }
     catch (e) { if (attempt >= 9) throw e; await wait(attempt); continue; }
+    // HTML response = Feishu 502/503/rate-limit, must retry
+    if (r && r._nonjson !== undefined && attempt < 9) { await wait(attempt); continue; }
     if (r && (r.code === 90217 || r.code === 90235) && attempt < 9) { await wait(attempt); continue; }
     return r;
   }
@@ -293,39 +295,61 @@ async function clearTrailingCols(token, sheetId, fromColNum, rows) {
   }
 }
 
-// 日经营数据汇总 — node 算静态值(按日期聚合),不写公式。
+// 日经营数据汇总 — 读现有行 + 合并近60天新数据 + 全量重写。
+// 历史日期(>60天)保留现有值不覆盖;近60天按新数据覆盖;新日期追加。
 async function ensureDailySummary(token, adRowsBT) {
   const header = await readHeader(token, SUMMARY_SHEET_ID);
-  // adRowsBT 是 B:AT 格式(D=idx2, E=idx3, F=idx4);无缓存时直接读 D:F
+  const dIdx = header.indexOf('统计周期');
+  if (dIdx < 0) throw new Error('日经营数据汇总缺少表头: 统计周期');
+
+  // 读现有行,以 serial 字符串为 key 建 map
+  const existRows = await readColsAll(token, SUMMARY_SHEET_ID, 'A', colLetter(header.length));
+  const existBy = {};
+  existRows.forEach(row => {
+    const v = row[dIdx];
+    if (v == null || v === '') return;
+    // serial 可能是数字或日期文本
+    const s = /^\d{5}(\.\d+)?$/.test(String(v).trim()) ? Math.round(+v) : dateToSerial(String(v));
+    if (s) existBy[String(s)] = header.map((_, j) => (row[j] == null ? '' : row[j]));
+  });
+
+  // 近60天新数据聚合
+  const cutoff60 = Math.round(Date.now() / 864e5) + 25569 - 60;
   const adsRows = adRowsBT ? adRowsBT.map(r => [r[2], r[3], r[4]]) : await readColsAll(token, 'uqJEhq', 'D', 'F');
   const prodRows = await readColsAll(token, 'c50205', 'D', 'AB');  // D日期 E新增 … AB收入(idx24)
-  const by = {};
-  const g = d => (by[d] = by[d] || { spend: 0, rev: 0, rn: 0, nu: 0 });
+  const newBy = {};
+  const g = d => (newBy[d] = newBy[d] || { spend: 0, rev: 0, rn: 0, nu: 0 });
   adsRows.forEach(r => { const d = r[0]; if (!d) return; const e = pnum(r[1]); g(d).spend += e; g(d).rn += e * ppct(r[2]); });
   prodRows.forEach(r => { const d = r[0]; if (!d) return; g(d).nu += pnum(r[1]); g(d).rev += pnum(r[24]); });
 
-  const dates = Object.keys(by).filter(d => dateToSerial(d)).sort((a, b) => dateToSerial(b) - dateToSerial(a));
-  // 累计ROI 已移到 build-overview.js 计算(避免每次全量扫 uqJEhq)
   const r1 = v => Math.round(v * 10) / 10;
-  const cellOf = (name, d) => {
-    const x = by[d];
-    switch (name) {
-      case '统计周期': return dateToSerial(d);
-      case '消耗': return r1(x.spend);
-      case '广告总收入': return r1(x.rev);
-      case '当日广告收入 ROAS (TikTok)':
-      case '广告收入 ROAS (TikTok)': return x.spend ? x.rn / x.spend : '';
-      case '累计消耗': case '累计收入': case 'TT累计ROI': return '';  // 已废弃,留空
-      case '新增用户': return Math.round(x.nu);
-      default: return '';
-    }
-  };
-  const grid = dates.map(d => header.map(name => (name ? cellOf(name, d) : '')));
-  const clearRows = dates.length + 1 + ROW_BUFFER;
-  console.log(`  日经营数据汇总(静态值): ${dates.length} 天, 写 2..${dates.length + 1}`);
+  // 把近60天新数据写入 existBy(覆盖)
+  for (const [d, x] of Object.entries(newBy)) {
+    const s = dateToSerial(d);
+    if (!s || s < cutoff60) continue;
+    const row = header.map(name => {
+      switch (name) {
+        case '统计周期': return s;
+        case '消耗': return r1(x.spend);
+        case '广告总收入': return r1(x.rev);
+        case '当日广告收入 ROAS (TikTok)':
+        case '广告收入 ROAS (TikTok)': return x.spend ? x.rn / x.spend : '';
+        case '累计消耗': case '累计收入': case 'TT累计ROI': return '';
+        case '新增用户': return Math.round(x.nu);
+        default: return '';
+      }
+    });
+    existBy[String(s)] = row;
+  }
+
+  // 按日期降序排列所有行写回
+  const allSerials = Object.keys(existBy).map(Number).sort((a, b) => b - a);
+  const grid = allSerials.map(s => existBy[String(s)]);
+  const clearRows = grid.length + 1 + ROW_BUFFER;
+  console.log(`  日经营数据汇总(合并写): 共${grid.length}天(历史${Object.keys(existBy).filter(s => +s < cutoff60).length}+近60天)`);
   await writeStaticGrid(token, SUMMARY_SHEET_ID, header, grid, clearRows);
-  await applyColumnFormats(token, SUMMARY_SHEET_ID, header, dates.length + 1);
-  return dates.length + 1;
+  await applyColumnFormats(token, SUMMARY_SHEET_ID, header, grid.length + 1);
+  return grid.length + 1;
 }
 
 // ─── 项目维度经营表 (JIKPZV) ────────────────────────────────────────────────
@@ -339,7 +363,9 @@ const PROJECT_SHEET_ID = 'JIKPZV';
 // Read 产品id及链接 A(项目组) B(产品名) → ordered groups + group→games map.
 // (User-maintained roster; covers 投放-only groups like 齿轮/战车 that never
 // appear in 产品数据原表.)
+let _groupMappingCache = null;
 async function getGroupMapping(token) {
+  if (_groupMappingCache) return _groupMappingCache;
   const groups = [];
   const groupGames = {};
   {
@@ -357,7 +383,8 @@ async function getGroupMapping(token) {
   // game → group from product table (product groups only)
   const gameToGroup = {};
   for (const grp of groups) for (const g of groupGames[grp]) gameToGroup[g] = grp;
-  return { groups, groupGames, gameToGroup };
+  _groupMappingCache = { groups, groupGames, gameToGroup };
+  return _groupMappingCache;
 }
 
 // node 算静态值:每行(日期×组),同日组按消耗降序。消耗=投放原表按 game→group 聚合;
@@ -404,20 +431,13 @@ async function ensureProjectSummary(token, adRowsBT) {
     c.r1W += ppct(r[16]) * nu; c.r7W += ppct(r[17]) * nu; c.r14W += ppct(r[18]) * nu; c.r30W += ppct(r[19]) * nu;
   });
 
-  const dates = [...new Set(Object.keys(by).map(k => k.split('|')[0]))]
+  const allDates = [...new Set(Object.keys(by).map(k => k.split('|')[0]))]
     .filter(d => dateToSerial(d)).sort((a, b) => dateToSerial(b) - dateToSerial(a));
-  const cum = {};  // cumulative per group over dates (ascending)
-  for (const grp of groups) {
-    let cS = 0, cR = 0, cN = 0, cA = 0;
-    [...dates].reverse().forEach(d => {
-      const x = by[`${d}|${grp}`] || { sp: 0, rev: 0, nu: 0, adAct: 0 };
-      cS += x.sp; cR += x.rev; cN += x.nu || 0; cA += x.adAct || 0;
-      cum[`${d}|${grp}`] = { s: cS, r: cR, n: cN, a: cA };
-    });
-  }
+  const cutoff = Math.round(Date.now() / 864e5) + 25569 - 60;
+  const dates = allDates.filter(d => dateToSerial(d) >= cutoff);
   const rows = [];  // each date × N groups, sorted by 消耗 desc within the day
   dates.forEach(d => {
-    groups.map(grp => ({ grp, date: d, ...(by[`${d}|${grp}`] || cell('-tmp-', '-tmp-')), c: cum[`${d}|${grp}`] || { s: 0, r: 0 } }))
+    groups.map(grp => ({ grp, date: d, ...(by[`${d}|${grp}`] || cell('-tmp-', '-tmp-')) }))
       .sort((a, b) => b.sp - a.sp).forEach(g => rows.push(g));
   });
 
@@ -430,9 +450,9 @@ async function ensureProjectSummary(token, adRowsBT) {
       case '消耗': return r1(row.sp);
       case '广告总收入': return r1(row.rev);
       case '当日广告收入 ROAS (TikTok)': case '广告收入 ROAS (TikTok)': return row.sp ? row.rn / row.sp : '';
-      case '项目累计消耗': case '累计消耗': return r1(row.c.s);
-      case '项目累计收入': case '累计收入': return r1(row.c.r);
-      case '项目累计ROI': case 'TT累计ROI': return row.c.s ? row.c.r / row.c.s : '';
+      case '项目累计消耗': case '累计消耗': return '';
+      case '项目累计收入': case '累计收入': return '';
+      case '项目累计ROI': case 'TT累计ROI': return '';
       case '新增用户': return Math.round(row.nu);
       case '手动出价消耗': return row.mSp ? r1(row.mSp) : '';
       case '手动出价ROI': return row.mSp ? row.mRn / row.mSp : '';
@@ -459,14 +479,14 @@ async function ensureProjectSummary(token, adRowsBT) {
       case '活跃用户': return row.act ? Math.round(row.act) : '';
       case '活跃度平均成本': return row.adAct ? r1(row.sp / row.adAct) : '';
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
-      case '项目累计新增用户': return row.c && row.c.n ? Math.round(row.c.n) : '';
-      case '历史平均活跃成本': return row.c && row.c.a ? r1(row.c.s / row.c.a) : '';
+      case '项目累计新增用户': return '';
+      case '历史平均活跃成本': return '';
       default: return '';
     }
   };
   const grid = rows.map((row, i) => header.map(name => (name ? cellOf(name, row, i + 1) : '')));
   const clearRows = rows.length + 1 + ROW_BUFFER;
-  console.log(`  项目维度经营表(静态值): ${dates.length}天 × ${groups.length}组 = ${rows.length}行`);
+  console.log(`  项目维度经营表(静态值): ${dates.length}天(近60天) × ${groups.length}组 = ${rows.length}行`);
   await writeStaticGrid(token, PROJECT_SHEET_ID, header, grid, clearRows);
   await clearTrailingCols(token, PROJECT_SHEET_ID, header.length + 1, clearRows);  // 清旧 helper 公式
   await applyColumnFormats(token, PROJECT_SHEET_ID, header, rows.length + 1);
@@ -540,31 +560,13 @@ async function ensureAdProductSummary(token, adRowsBT) {
     if (r[44] === '手动出价') { x.mSp += e; x.mRn += e * ppct(r[4]); }
     else if (r[44] === '自动出价') { x.aSp += e; x.aRn += e * ppct(r[4]); }
   });
-  // 产品累计:每游戏按日期升序累计 消耗(投放) + 广告总收入(产品表) → serial|game
-  const gameCum = {};
-  {
-    const serials = new Set();
-    const games = new Set();
-    Object.values(by).forEach(x => { const s = serAny(x.date); if (s) { serials.add(s); games.add(x.game); } });
-    Object.keys(revMap).forEach(k => { serials.add(+k.split('|')[0]); games.add(k.split('|').slice(1).join('|')); });
-    const ordered = [...serials].sort((a, b) => a - b);
-    const spBySer = {};  // serial|game → 当日消耗
-    Object.values(by).forEach(x => { const s = serAny(x.date); if (s) spBySer[`${s}|${x.game}`] = x.sp; });
-    for (const g of games) {
-      let cs = 0, cr = 0;
-      for (const s of ordered) {
-        cs += spBySer[`${s}|${g}`] || 0; cr += revMap[`${s}|${g}`] || 0;
-        gameCum[`${s}|${g}`] = { cs, cr };
-      }
-    }
-  }
-  const rows = Object.values(by).filter(x => x.sp > 0)
+  const cutoff60 = Math.round(Date.now() / 864e5) + 25569 - 60;
+  const rows = Object.values(by).filter(x => x.sp > 0 && (serAny(x.date) || 0) >= cutoff60)
     .sort((a, b) => (dateToSerial(b.date) - dateToSerial(a.date)) || (b.sp - a.sp));
 
   const r1 = v => Math.round(v * 10) / 10;
   const cellOf = (name, row, seq) => {
     const s = serAny(row.date);
-    const cum = gameCum[`${s}|${row.game}`];
     switch (name) {
       case '序号': return seq;
       case '按天': return dateToSerial(row.date);
@@ -576,14 +578,10 @@ async function ensureAdProductSummary(token, adRowsBT) {
       case '活跃度': return Math.round(row.act);
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
       case '广告总收入': return r1(revMap[`${s}|${row.game}`] || 0);
-      case '产品累计消耗': return cum ? r1(cum.cs) : '';
-      case '产品累计收入': return cum ? r1(cum.cr) : '';
-      case '产品累计ROI': return cum && cum.cs ? cum.cr / cum.cs : '';
-      case '信号': {  // 回本信号:只判有规模的(累计消耗≥50),小额不报噪音
-        if (!cum || cum.cs < 50) return '';
-        const roi = cum.cr / cum.cs;
-        return roi >= 1 ? '🟢已回本' : roi >= 0.7 ? '🟡接近回本' : '🔴回收偏低';
-      }
+      case '产品累计消耗': return '';
+      case '产品累计收入': return '';
+      case '产品累计ROI': return '';
+      case '信号': return '';  // 累计列已废弃,信号字段也无数据源
       case '手动出价消耗': return row.mSp ? r1(row.mSp) : '';
       case '手动出价ROI': return row.mSp ? row.mRn / row.mSp : '';
       case '自动出价消耗': return row.aSp ? r1(row.aSp) : '';
@@ -764,8 +762,8 @@ async function ensureAdBidSummary(token, adRowsBT) {
       case '活跃度平均成本': return row.act ? r1(row.sp / row.act) : '';
       case '活跃度': return Math.round(row.act);
       case '人均广告次数': return row.eng ? r1(row.gross / row.eng) : '';
-      case '项目累计新增用户': return row.c && row.c.n ? Math.round(row.c.n) : '';
-      case '历史平均活跃成本': return row.c && row.c.a ? r1(row.c.s / row.c.a) : '';
+      case '项目累计新增用户': return '';
+      case '历史平均活跃成本': return '';
       default: return '';
     }
   };
