@@ -22,29 +22,23 @@ function req(m, p, t, b) {
 async function main() {
   const token = await getFeishuToken();
 
-  // 1. 设为获得链接的人均可阅读
+  // 1. 设为获得链接的人均可编辑
   const pub = await req('PUT', `/open-apis/drive/v1/permissions/${BASE}/public?type=bitable`, token, {
     external_access_entity: 'open',
-    security_entity: 'anyone_can_view',
+    security_entity: 'anyone_can_edit',
     comment_entity: 'no_one_can_comment',
-    link_share_entity: 'anyone_readable',
+    link_share_entity: 'anyone_editable',
     invite_external: true,
   });
-  console.log('Public link:', pub.code === 0 ? '✅ 任何人可阅读' : JSON.stringify(pub));
+  console.log('Public link:', pub.code === 0 ? '✅ 任何人可编辑' : JSON.stringify(pub));
 
-  // 2. email → union_id
-  const uid = await req('POST', '/open-apis/contact/v3/users/batch_get_id?user_id_type=union_id', token, { emails: [USER_EMAIL] });
-  const unionId = uid.data?.email_users?.[USER_EMAIL]?.[0]?.user_id;
-  if (!unionId) { console.error('Cannot find union_id for', USER_EMAIL, JSON.stringify(uid)); process.exit(1); }
-  console.log('union_id:', unionId);
-
-  // 3. 加用户为管理员
+  // 2. 加用户为协作者(edit)
   const mem = await req('POST', `/open-apis/drive/v1/permissions/${BASE}/members?type=bitable&need_notification=false`, token, {
-    member_type: 'union_id',
-    member_id: unionId,
-    perm: 'full_access',
+    member_type: 'email',
+    member_id: USER_EMAIL,
+    perm: 'edit',
   });
-  console.log('Add admin:', mem.code === 0 ? `✅ ${USER_EMAIL} 已设为管理员` : JSON.stringify(mem));
+  console.log('Add member:', mem.code === 0 ? `✅ ${USER_EMAIL} 已加为编辑者` : JSON.stringify(mem));
 }
 
 main().catch(e => { console.error('ERR:', e.message); process.exit(1); });
