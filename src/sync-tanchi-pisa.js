@@ -25,8 +25,19 @@ function once(m, p, t, b) {
   });
 }
 async function api(m, p, t, b) {
-  const w = a => new Promise(s => setTimeout(s, Math.min(8000, 400 * 2 ** a) + Math.random() * 300));
-  for (let a = 0; ; a++) { let r; try { r = await once(m, p, t, b); } catch (e) { if (a >= 7) throw e; await w(a); continue; } if (r && [1254290, 1254291, 90217, 90235].includes(r.code) && a < 7) { await w(a); continue; } return r; }
+  const w = a => new Promise(s => setTimeout(s, Math.min(12000, 600 * 2 ** a) + Math.random() * 500));
+  for (let a = 0; ; a++) { let r; try { r = await once(m, p, t, b); } catch (e) { if (a >= 8) throw e; await w(a); continue; } if (r && r._n && a < 8) { await w(a); continue; } if (r && [1254290, 1254291, 90217, 90235].includes(r.code) && a < 8) { await w(a); continue; } return r; }
+}
+async function upsert(token, base, tid, recs, keyFields) {
+  let all = [], pt = '';
+  do { const r = await api('GET', `/open-apis/bitable/v1/apps/${base}/tables/${tid}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token); (r.data?.items || []).forEach(x => all.push(x)); pt = r.data?.has_more ? r.data.page_token : ''; } while (pt);
+  const existMap = {}; all.forEach(x => { existMap[keyFields.map(f => String(x.fields[f] ?? '')).join('|')] = x.record_id; });
+  const toUpdate = [], toCreate = [];
+  recs.forEach(rec => { const k = keyFields.map(f => String(rec.fields[f] ?? '')).join('|'); if (existMap[k]) toUpdate.push({ record_id: existMap[k], fields: rec.fields }); else toCreate.push(rec); });
+  let updated = 0, created = 0;
+  for (let i = 0; i < toUpdate.length; i += 200) { const w = await api('POST', `/open-apis/bitable/v1/apps/${base}/tables/${tid}/records/batch_update`, token, { records: toUpdate.slice(i, i + 200) }); if (w.code === 0) updated += Math.min(200, toUpdate.length - i); }
+  for (let i = 0; i < toCreate.length; i += 200) { const w = await api('POST', `/open-apis/bitable/v1/apps/${base}/tables/${tid}/records/batch_create`, token, { records: toCreate.slice(i, i + 200) }); if (w.code !== 0) throw new Error('create: ' + JSON.stringify(w).slice(0, 80)); created += Math.min(200, toCreate.length - i); }
+  return { updated, created };
 }
 const pnum = v => parseFloat(String(v == null ? '' : v).replace(/[,%]/g, '')) || 0;
 const ppct = v => { const s = String(v == null ? '' : v); return s.includes('%') ? pnum(s) / 100 : pnum(s); };
@@ -60,9 +71,6 @@ async function syncProject(token, GROUP, QZ) {
   const tables = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables?page_size=100`, token)).data?.items || [];
   let tid = tables.find(x => x.name === TABLE)?.table_id;
   if (tid) {
-    let all = [], pt = '';
-    do { const r = await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token); (r.data?.items || []).forEach(x => all.push(x.record_id)); pt = r.data?.has_more ? r.data.page_token : ''; } while (pt);
-    for (let i = 0; i < all.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid}/records/batch_delete`, token, { records: all.slice(i, i + 500) });
     const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
     for (const f of fields) if (!exist.has(f.field_name)) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid}/fields`, token, { field_name: f.field_name, type: f.type });
   } else tid = (await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables`, token, { table: { name: TABLE, fields } })).data?.table_id;
@@ -80,11 +88,8 @@ async function syncProject(token, GROUP, QZ) {
     { const ms = f['统计周期']; if (ms) { const dt = new Date(ms + 288e5); f['月份'] = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`; } }
     return { fields: f };
   });
-  for (let i = 0; i < recs.length; i += 200) {
-    const w = await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
-    if (w.code !== 0) throw new Error('write: ' + JSON.stringify(w).slice(0, 120));
-  }
-  console.log(`✅ ${GROUP}-经营日报 ${recs.length} 行 (${tid})`);
+  const { updated: u1, created: c1 } = await upsert(token, QZ, tid, recs, ['统计周期']);
+  console.log(`✅ ${GROUP}-经营日报 更新${u1}+新增${c1}行(历史累计, ${tid})`);
 
   // ── 包体日报 ──────────────────────────────────────────────────────────
   let g2 = [], s2 = 1;
@@ -110,9 +115,6 @@ async function syncProject(token, GROUP, QZ) {
   const tables2 = (await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables?page_size=100`, token)).data?.items || [];
   let tid2 = tables2.find(x => x.name === `${GROUP}-包体日报(每日)`)?.table_id;
   if (tid2) {
-    let all = [], pt = '';
-    do { const r = await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token); (r.data?.items || []).forEach(x => all.push(x.record_id)); pt = r.data?.has_more ? r.data.page_token : ''; } while (pt);
-    for (let i = 0; i < all.length; i += 500) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_delete`, token, { records: all.slice(i, i + 500) });
     const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
     for (const f of pkFields) if (!exist.has(f.field_name)) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/fields`, token, { field_name: f.field_name, type: f.type });
   } else tid2 = (await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables`, token, { table: { name: `${GROUP}-包体日报(每日)`, fields: pkFields } })).data?.table_id;
@@ -132,8 +134,8 @@ async function syncProject(token, GROUP, QZ) {
     f['月份'] = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
     return { fields: f };
   });
-  for (let i = 0; i < pkRecs.length; i += 200) await api('POST', `/open-apis/bitable/v1/apps/${QZ}/tables/${tid2}/records/batch_create`, token, { records: pkRecs.slice(i, i + 200) });
-  console.log(`✅ ${GROUP}-包体日报 ${pkRecs.length} 行 (${tid2})`);
+  const { updated: u2, created: c2 } = await upsert(token, QZ, tid2, pkRecs, ['统计周期', '游戏名称']);
+  console.log(`✅ ${GROUP}-包体日报 更新${u2}+新增${c2}行(历史累计, ${tid2})`);
 
   // ── 包体表按游戏名称维护筛选视图 ─────────────────────────────────────
   {

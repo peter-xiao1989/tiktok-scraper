@@ -131,22 +131,40 @@ async function clearRecords(token, tid) {
 async function main() {
   const token = await getFeishuToken();
   const [ws, jk] = await Promise.all([readSheet(token, 'wAsSso!A2:H500'), readSheet(token, 'JIKPZV!B2:I500')]);
-  // 只保留近30天(驾驶舱趋势图读全表→自动近30天窗口;完整历史在电子表格/数据月报)
-  const recs = buildRecords(ws, jk).slice(0, 30);
+  const recs = buildRecords(ws, jk);
   if (!recs.length) { console.log('无数据'); return; }
 
-  // 复用同名表(清记录重写),否则新建 → 保留团队建好的视图/仪表盘
-  let tid = listTables.cache || (await listTables(token)).find(x => x.name === TABLE_NAME)?.table_id;
-  if (tid) { const n = await clearRecords(token, tid); console.log(`复用表 ${tid},清旧记录 ${n}`); }
-  else {
+  let tid = (await listTables(token)).find(x => x.name === TABLE_NAME)?.table_id;
+  if (!tid) {
     const cr = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables`, token, { table: { name: TABLE_NAME, fields: FIELDS } });
     tid = cr.data?.table_id; console.log(`新建表 ${tid}`);
   }
-  for (let i = 0; i < recs.length; i += 200) {
-    const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
-    if (w.code !== 0) throw new Error('write: ' + JSON.stringify(w));
+
+  // upsert by 日期:历史记录永久保留,当天数据更新
+  let all = [], pt = '';
+  do {
+    const r = await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token);
+    (r.data?.items || []).forEach(x => all.push(x)); pt = r.data?.has_more ? r.data.page_token : '';
+  } while (pt);
+  const existMap = {};
+  all.forEach(x => { existMap[String(x.fields['日期'] ?? '')] = x.record_id; });
+  const toUpdate = [], toCreate = [];
+  recs.forEach(rec => {
+    const k = String(rec.fields['日期'] ?? '');
+    if (existMap[k]) toUpdate.push({ record_id: existMap[k], fields: rec.fields });
+    else toCreate.push(rec);
+  });
+  let updated = 0, created = 0;
+  for (let i = 0; i < toUpdate.length; i += 200) {
+    const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_update`, token, { records: toUpdate.slice(i, i + 200) });
+    if (w.code === 0) updated += Math.min(200, toUpdate.length - i);
   }
-  console.log(`✅ 经营概览写入 ${recs.length} 天`);
+  for (let i = 0; i < toCreate.length; i += 200) {
+    const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: toCreate.slice(i, i + 200) });
+    if (w.code !== 0) throw new Error('write: ' + JSON.stringify(w));
+    created += Math.min(200, toCreate.length - i);
+  }
+  console.log(`✅ 经营概览 更新${updated}+新增${created}天(历史累计)`);
 }
 
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });

@@ -25,6 +25,16 @@ const SHEETS = [
 const REQUIRE_COL = { '【每小时】投放数据监测': '项目组', '【每小时】素材数据监测': '创意素材名称' };
 // 这些表在第一行插入汇总行:数值求和、日期取最新、项目组/素材名写"汇总"、其余文本留空
 const SUMMARY_FIRST = new Set(['【每小时】投放数据监测', '【每小时】素材数据监测']);
+// 这些表改为"upsert"模式:按 key 字段匹配已有记录 → 更新;否则新增。历史行永不删除。
+// key 字段名使用 RENAME 之后的多维表列名(Bitable 中实际存储的名称)。
+const UPSERT_KEY = {
+  '日经营数据汇总':        ['统计周期'],
+  '【经营日报】-项目维度':  ['统计周期', '项目组'],
+  '【经营日报】-包体维度':  ['统计周期', '游戏名称'],
+  '【投放日报】-产品维度':  ['按天', '游戏名称'],
+  '【投放日报】-素材维度':  ['按天', '项目组', '创意素材名称'],
+  '【投放日报】-出价维度':  ['按天', '项目组'],
+};
 const SKIP = new Set(['序号', '类别']);
 // 多维表字段显示名重命名(值和来源不变,只改多维表里的列名)。key=多维表名。
 const RENAME = {
@@ -134,6 +144,14 @@ async function clearRecords(token, tid) {
   }
   return all.length;
 }
+async function fetchAllRecords(token, tid) {
+  let all = [], pt = '';
+  do {
+    const r = await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records?page_size=500${pt ? '&page_token=' + pt : ''}`, token);
+    (r.data?.items || []).forEach(x => all.push(x)); pt = r.data?.has_more ? r.data.page_token : '';
+  } while (pt);
+  return all;
+}
 
 async function syncTable(token, sheet, name, tables) {
   const grid = await readGrid(token, sheet);
@@ -174,8 +192,10 @@ async function syncTable(token, sheet, name, tables) {
   // 注:当前表已是去序号结构(主字段=业务列);若电子表格 header 结构变,需手动删表让其重建。
   const old = tables.find(x => x.name === name);
   let tid;
+  const isUpsert = !!UPSERT_KEY[name];
   if (old) {
-    tid = old.table_id; await clearRecords(token, tid);
+    tid = old.table_id;
+    if (!isUpsert) await clearRecords(token, tid);
     // 自动补缺字段(电子表格新增列时多维表跟着加,否则写入报未知字段)
     const exist = new Set(((await api('GET', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields?page_size=100`, token)).data?.items || []).map(x => x.field_name));
     for (const f of fields) {
@@ -201,12 +221,38 @@ async function syncTable(token, sheet, name, tables) {
     });
     return { fields: f };
   });
-  let n = 0;
-  for (let i = 0; i < recs.length; i += 200) {
-    const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
-    if (w.code === 0) n += Math.min(200, recs.length - i); else { console.log(`  ${name}: 写入失败 ${JSON.stringify(w).slice(0, 80)}`); break; }
+
+  if (isUpsert) {
+    const keyFields = UPSERT_KEY[name];
+    const existing = await fetchAllRecords(token, tid);
+    const existMap = {};
+    existing.forEach(x => { existMap[keyFields.map(f => String(x.fields[f] ?? '')).join('|')] = x.record_id; });
+    const toUpdate = [], toCreate = [];
+    recs.forEach(rec => {
+      const k = keyFields.map(f => String(rec.fields[f] ?? '')).join('|');
+      if (existMap[k]) toUpdate.push({ record_id: existMap[k], fields: rec.fields });
+      else toCreate.push(rec);
+    });
+    let updated = 0, created = 0;
+    for (let i = 0; i < toUpdate.length; i += 200) {
+      const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_update`, token, { records: toUpdate.slice(i, i + 200) });
+      if (w.code === 0) updated += Math.min(200, toUpdate.length - i);
+      else console.log(`  ${name}: 更新失败 ${JSON.stringify(w).slice(0, 80)}`);
+    }
+    for (let i = 0; i < toCreate.length; i += 200) {
+      const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: toCreate.slice(i, i + 200) });
+      if (w.code === 0) created += Math.min(200, toCreate.length - i);
+      else console.log(`  ${name}: 新增失败 ${JSON.stringify(w).slice(0, 80)}`);
+    }
+    console.log(`  ✅ ${name}: ${header.length}列 更新${updated}+新增${created}行(历史累计)`);
+  } else {
+    let n = 0;
+    for (let i = 0; i < recs.length; i += 200) {
+      const w = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/records/batch_create`, token, { records: recs.slice(i, i + 200) });
+      if (w.code === 0) n += Math.min(200, recs.length - i); else { console.log(`  ${name}: 写入失败 ${JSON.stringify(w).slice(0, 80)}`); break; }
+    }
+    console.log(`  ✅ ${name}: ${header.length}列(去序号) × ${n}行`);
   }
-  console.log(`  ✅ ${name}: ${header.length}列(去序号) × ${n}行`);
   // 自动维护按字段值的筛选视图(新组/新游戏出现自动补建;sortBy 按近N天消耗排序)
   const vf = FILTER_VIEWS[name];
   if (vf) {
