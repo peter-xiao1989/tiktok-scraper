@@ -1,0 +1,18 @@
+name: Fix Jianyu Dashboard (one-time)
+on:
+  workflow_dispatch:
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Fix 监狱 dashboard name + verify data
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          JIANYU_BASE:       ${{ secrets.JIANYU_BASE }}
+        run: node scripts/fix-jianyu-dashboard.js
