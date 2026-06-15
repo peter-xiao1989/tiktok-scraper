@@ -23,6 +23,8 @@ const SHEETS = [
 ];
 // 该字段为空的行跳过(去掉电子表格里的"汇总-N"行,汇总由仪表盘聚合体现)
 const REQUIRE_COL = { '【每小时】投放数据监测': '项目组', '【每小时】素材数据监测': '创意素材名称' };
+// 这些表在第一行插入汇总行:数值求和、日期取最新、项目组/素材名写"汇总"、其余文本留空
+const SUMMARY_FIRST = new Set(['【每小时】投放数据监测', '【每小时】素材数据监测']);
 const SKIP = new Set(['序号', '类别']);
 // 多维表字段显示名重命名(值和来源不变,只改多维表里的列名)。key=多维表名。
 const RENAME = {
@@ -146,6 +148,17 @@ async function syncTable(token, sheet, name, tables) {
   const reqCol = REQUIRE_COL[name];
   if (reqCol) { const ri = header.indexOf(reqCol); if (ri >= 0) data = data.filter(r => r[ri]); }
   if (!data.length) { console.log(`  ${name}: 无数据行,跳过`); return; }
+
+  // 汇总首行:数值列求和、pct 列留空(ROI 加权无意义)、日期列取最新、项目组/素材名写"汇总"
+  if (SUMMARY_FIRST.has(name)) {
+    const sumRow = header.map((h, k) => {
+      if (h === '项目组' || h === '创意素材名称') return '汇总';
+      if (kind[k] === 'num') return String(Math.round(data.reduce((s, r) => s + (parseFloat(r[k].replace(/[,%]/g, '')) || 0), 0) * 100) / 100);
+      if (kind[k] === 'date') return data.map(r => r[k]).filter(v => v).sort().pop() || '';
+      return '';
+    });
+    data = [sumRow, ...data];
+  }
 
   // 列类型: 日期 / 百分比 / 数值 / 文本
   const kind = header.map((h, k) => {
