@@ -29,11 +29,18 @@ function req(m, p, t, b) {
 async function main() {
   const token = await getFeishuToken();
 
+  // 0. 获取根目录 folder_token
+  const rootMeta = await req('GET', '/open-apis/drive/explorer/v2/root_folder/meta', token);
+  const folderToken = rootMeta.data?.token;
+  if (!folderToken) { console.error('Cannot get root folder:', JSON.stringify(rootMeta)); process.exit(1); }
+  console.log('Root folder token:', folderToken);
+
   // 1. 复制 枪战 base
   console.log('Copying 枪战 base...');
   const copy = await req('POST', `/open-apis/drive/v1/files/${QIANGZHAN_BASE}/copy`, token, {
     name: '监狱经营数据中心',
     type: 'bitable',
+    folder_token: folderToken,
   });
 
   if (copy.code !== 0) {
