@@ -32,10 +32,16 @@ async function main() {
   });
   console.log('Public link:', pub.code === 0 ? '✅ 任何人可阅读' : JSON.stringify(pub));
 
-  // 2. 加用户为管理员
+  // 2. email → union_id
+  const uid = await req('POST', '/open-apis/contact/v3/users/batch_get_id?user_id_type=union_id', token, { emails: [USER_EMAIL] });
+  const unionId = uid.data?.email_users?.[USER_EMAIL]?.[0]?.user_id;
+  if (!unionId) { console.error('Cannot find union_id for', USER_EMAIL, JSON.stringify(uid)); process.exit(1); }
+  console.log('union_id:', unionId);
+
+  // 3. 加用户为管理员
   const mem = await req('POST', `/open-apis/drive/v1/permissions/${BASE}/members?type=bitable&need_notification=false`, token, {
-    member_type: 'email',
-    member_id: USER_EMAIL,
+    member_type: 'union_id',
+    member_id: unionId,
     perm: 'full_access',
   });
   console.log('Add admin:', mem.code === 0 ? `✅ ${USER_EMAIL} 已设为管理员` : JSON.stringify(mem));
