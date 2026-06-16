@@ -80,9 +80,10 @@ async function main() {
     const tbl = tables.find(t => t.name === name);
     if (!tbl) { console.log(`  ⚠️ ${name}: 表不存在`); stale.push(`${name}（表不存在）`); continue; }
 
-    // 取最新 10 条记录，检查是否有昨日日期
+    // 取日期倒序最新 5 条，检查是否有昨日日期
+    const sort = encodeURIComponent(JSON.stringify([{ field_name: field, desc: true }]));
     const r = await api('GET',
-      `/open-apis/bitable/v1/apps/${BASE}/tables/${tbl.table_id}/records?page_size=10`, token);
+      `/open-apis/bitable/v1/apps/${BASE}/tables/${tbl.table_id}/records?page_size=5&sort=${sort}`, token);
     const records = r.data?.items || [];
 
     let found = false;
