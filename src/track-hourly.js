@@ -78,7 +78,8 @@ async function main() {
   const AVG = '7日均';
 
   // 当前分时消耗(jdlBTh 明细行,消耗>0 的行全量纳入全部合计;有项目组的行另做分组)
-  const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/jdlBTh!C2:I40?valueRenderOption=FormattedValue`, token);
+  // 上限 200 行,覆盖所有在投游戏×出价维度组合
+  const r = await api('GET', `/open-apis/sheets/v2/spreadsheets/${SS}/values/jdlBTh!C2:I200?valueRenderOption=FormattedValue`, token);
   const rows = (r.data?.valueRange?.values || []).filter(x => x[1] && pnum(x[3]) > 0);  // C项目组0 D游戏1 E出价2 F消耗3 G_ROAS4 H活跃成本5 I活跃度6; x[1]=游戏名非空排除汇总行
   const ppct = v => { const str = String(v == null ? '' : v); return str.includes('%') ? pnum(str) / 100 : pnum(str); };
   const byGrp = {}; let total = 0, totalRn = 0, totalAct = 0;
@@ -307,6 +308,87 @@ async function main() {
         { name: '记录时间', type: 'datetime', style: { format: 'yyyy/MM/dd HH:mm' } });
   }
   console.log(`✅ 时录v2 ${tag} ${hour}点 总消耗${f1(total)} 预警${alerts.length}条(7日均样本${avgRecs.length}行)`);
+
+  // ── 分时通知推送(每小时,按项目组路由)────────────────────────────────────
+  await sendHourlyNotify({ tag, ytag, hour, total, totalRn, byGrp, real });
 }
+
+// 分时通知:昨日同时点对比,消息简短
+async function sendHourlyNotify({ tag, ytag, hour, total, totalRn, byGrp, real }) {
+  const WEBHOOK_MAP = {
+    '战车':   'FEISHU_WEBHOOK_ZHANCHE',
+    '齿轮':   'FEISHU_WEBHOOK_CHILUN',
+    '贪吃蛇': 'FEISHU_WEBHOOK_TANCHISHE',
+  };
+  const FALLBACK = 'FEISHU_WEBHOOK';
+
+  function getUrl(grp) {
+    const e = WEBHOOK_MAP[grp];
+    return (e && process.env[e]) || process.env[FALLBACK] || null;
+  }
+
+  function sendText(url, text) {
+    return new Promise(resolve => {
+      try {
+        const u = new URL(url);
+        const body = JSON.stringify({ msg_type: 'text', content: { text } });
+        const req = require('https').request(
+          { hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+          res => { res.on('data', () => {}); res.on('end', resolve); }
+        );
+        req.on('error', () => resolve()); req.write(body); req.end();
+      } catch { resolve(); }
+    });
+  }
+
+  const fallbackUrl = process.env[FALLBACK];
+  if (!fallbackUrl && !Object.values(WEBHOOK_MAP).some(e => process.env[e])) return; // 未配置,静默
+
+  const f1h = v => (v == null || !isFinite(v)) ? '0' : String(Math.round(v * 10) / 10);
+  const signPct = v => v == null ? '-' : (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+
+  // 昨日同时点 from real(已过滤到 keepTags 内的历史记录)
+  const yHourOf = grp => {
+    const rec = real.find(x => x.fields['日期'] === ytag && String(x.fields['小时']) === String(hour) && x.fields['项目组'] === grp);
+    return rec ? pnum(rec.fields['消耗']) : null;
+  };
+
+  // 各项目组
+  const groups = Object.keys(byGrp).filter(g => byGrp[g].sp > 0);
+  const sent = new Set();
+
+  for (const grp of groups) {
+    const url = getUrl(grp);
+    if (!url) continue;
+    const g = byGrp[grp];
+    const ysp = yHourOf(grp);
+    const chg = ysp != null && ysp > 0 ? (g.sp - ysp) / ysp : null;
+    const roi = g.sp > 0 ? g.rn / g.sp : null;
+    const msg = [
+      `⏱ ${grp} 今日 0-${hour}时`,
+      `消耗 ¥${f1h(g.sp)}${chg !== null ? ` | 较昨同期 ${signPct(chg)}` : ''}`,
+      roi != null ? `广告首日ROI: ${String(Math.round(roi * 100) / 100)}` : '',
+    ].filter(Boolean).join('\n');
+    if (!sent.has(url)) {
+      await sendText(url, msg);
+      sent.add(url);
+    }
+  }
+
+  // 总量推通用群(如果不同于已发的)
+  if (fallbackUrl && !sent.has(fallbackUrl)) {
+    const yTotal = yHourOf('全部');
+    const chg = yTotal != null && yTotal > 0 ? (total - yTotal) / yTotal : null;
+    const roi = total > 0 ? totalRn / total : null;
+    const msg = [
+      `⏱ 全部 今日 0-${hour}时`,
+      `消耗 ¥${f1h(total)}${chg !== null ? ` | 较昨同期 ${signPct(chg)}` : ''}`,
+      roi != null ? `广告首日ROI: ${String(Math.round(roi * 100) / 100)}` : '',
+    ].filter(Boolean).join('\n');
+    await sendText(fallbackUrl, msg);
+  }
+}
+
 if (require.main === module) main().catch(e => { console.error('ERR', e.message); process.exit(1); });
 module.exports = { main };

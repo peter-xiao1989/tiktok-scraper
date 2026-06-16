@@ -1,0 +1,59 @@
+name: 周报/月报推送
+
+on:
+  schedule:
+    # 周报: 每周一 09:00 BJT (UTC 01:00)
+    - cron: '0 1 * * 1'
+    # 月报: 每月1日 09:00 BJT (UTC 01:00)
+    - cron: '0 1 1 * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'weekly | monthly'
+        required: true
+        default: 'weekly'
+      range:
+        description: '可选: YYYY-WNN (周) 或 YYYY-MM (月)'
+        required: false
+
+jobs:
+  summary:
+    name: 推送周/月汇总
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: 判断推送类型
+        id: mode
+        run: |
+          if [ -n "${{ github.event.inputs.mode }}" ]; then
+            echo "mode=${{ github.event.inputs.mode }}" >> "$GITHUB_OUTPUT"
+          else
+            # 周一触发=周报,1号触发=月报(周一且1号优先月报)
+            DAY=$(TZ=Asia/Shanghai date +%d)
+            DOW=$(TZ=Asia/Shanghai date +%u)
+            if [ "$DAY" = "01" ]; then
+              echo "mode=monthly" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode=weekly" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: 推送汇总报告
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:            ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:        ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_WEBHOOK:           ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_WEBHOOK_ZHANCHE:   ${{ secrets.FEISHU_WEBHOOK_ZHANCHE }}
+          FEISHU_WEBHOOK_CHILUN:    ${{ secrets.FEISHU_WEBHOOK_CHILUN }}
+          FEISHU_WEBHOOK_TANCHISHE: ${{ secrets.FEISHU_WEBHOOK_TANCHISHE }}
+        run: node src/notify-summary.js "${{ steps.mode.outputs.mode }}" "${{ github.event.inputs.range }}"

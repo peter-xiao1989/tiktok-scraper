@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
       - run: npm ci
@@ -93,7 +93,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
       - run: npm ci
@@ -116,3 +116,30 @@ jobs:
           URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -sS -X POST "$FEISHU_WEBHOOK" -H 'Content-Type: application/json' \
             -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"🔴 多维表同步失败 ($BJT BJT)\n$URL\"}}"
+
+  # Job 3: 投放日报推送(需 sync-bitable 完成后才有最新数据)
+  notify:
+    name: 投放日报推送
+    needs: sync-bitable
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: 推送投放日报到飞书群
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:              ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:          ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_WEBHOOK:             ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_WEBHOOK_ZHANCHE:     ${{ secrets.FEISHU_WEBHOOK_ZHANCHE }}
+          FEISHU_WEBHOOK_CHILUN:      ${{ secrets.FEISHU_WEBHOOK_CHILUN }}
+          FEISHU_WEBHOOK_TANCHISHE:   ${{ secrets.FEISHU_WEBHOOK_TANCHISHE }}
+        run: node src/notify-daily.js

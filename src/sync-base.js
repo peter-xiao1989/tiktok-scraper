@@ -228,14 +228,29 @@ async function syncTable(token, sheet, name, tables) {
       console.log(`  ${name}: 补字段「${f.field_name}」${r.code === 0 ? '✅' : '❌' + r.code}`);
       if (r.code === 0) exist.add(f.field_name);
     }
-    // 补公式字段(累计类指标从电子表格移到 Bitable formula 计算)
+    // 补/升级公式字段(累计类指标从电子表格移到 Bitable formula 计算)
+    // 若字段已存在但不是 formula 类型(type≠20),尝试 PATCH 升级;否则直接创建
     const formulaDefs = FORMULA_FIELDS[name];
     if (formulaDefs) {
+      const fieldById = {};
+      existFields.forEach(x => { fieldById[x.field_name] = x; });
       for (const { field_name, formula } of formulaDefs) {
-        if (exist.has(field_name)) continue;
-        const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields`, token,
-          { field_name, type: 20, property: { formula_expression: formula } });
-        console.log(`  ${name}: 补公式字段「${field_name}」${r.code === 0 ? '✅' : '❌' + r.code}`);
+        const cur = fieldById[field_name];
+        if (cur) {
+          if (cur.type === 20) continue;  // 已是公式字段,跳过
+          // 存在但类型错误(Number/Text),尝试 PATCH 升级为公式类型
+          const pr = await api('PATCH', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields/${cur.field_id}`, token,
+            { field_name, type: 20, property: { formula_expression: formula } });
+          if (pr.code === 0) {
+            console.log(`  ${name}: 升级公式字段「${field_name}」✅`);
+          } else {
+            console.log(`  ${name}: ⚠️ 无法升级「${field_name}」为公式字段(${pr.code}),请在多维表手动删除该列后重运行`);
+          }
+        } else {
+          const r = await api('POST', `/open-apis/bitable/v1/apps/${BASE}/tables/${tid}/fields`, token,
+            { field_name, type: 20, property: { formula_expression: formula } });
+          console.log(`  ${name}: 创建公式字段「${field_name}」${r.code === 0 ? '✅' : '❌' + r.code}`);
+        }
       }
     }
   }
