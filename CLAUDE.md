@@ -45,7 +45,6 @@ TikTok realtime ──realtime(每小时*)─────────┘
 - 多维表「TT经营数据中心」:`YB8TbS45kaO1gesMtqlc8kpznEb`。`src/sync-base.js [all|chanpin|toufang|fenshi]` 同步 6 张明细表(去序号/类别列、类型正确、**复用表清记录→table_id 稳定**);`src/build-overview.js` 建「经营概览(每日)」。**仪表盘(lark-cli 建)**:经营总览 `blkN7iTRJwPqBFga`(⚠️用户手工维护,bot只能末尾追加)/ 素材分析 `blk8GaOBZTkjBLPx`/ 实时监测 `blkuynWz9LEIZEwk`(track-hourly.js 每小时刷新)。改图用 `lark-cli base +dashboard-block-*`(REST API 建不了图表;`dashboard-block-delete` 要 `--yes`),详见 `docs/dashboard-guide.md`。字段格式用 base v3 `field-update`(number style.percentage/precision、datetime style.format="MM-dd";**飞书日期不支持中文格式**)。旧 base HCXKb… 弃用。
 - **⚠️ sync-base 必须复用表(清记录),严禁删表重建**——table_id 一变,仪表盘所有图表失效需重建。
 - `sheets_to_base.py` 已被 `src/sync-base.js` 取代(node 版可靠、能去序号、类型正确),保留备查。
-- 游戏选品群:`oc_0d077d9ba6ce793a835b546bd9dbb9e6`
 - 本地验证衍生表:`FEISHU_APP_SECRET=… node -e "…ensureReportFormulas/ensureDailySummary…"`(见 src/build-summaries.js exports)
 - 外部准点调度:见 `scheduler/README.md`
 
