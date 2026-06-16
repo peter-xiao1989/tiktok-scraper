@@ -3,6 +3,7 @@ name: Daily Ad Data (07:00 BJT)
 on:
   schedule:
     - cron: '17 23 * * *'   # 07:17 BJT
+    - cron: '47 23 * * *'   # 07:47 BJT (backup: dedup makes duplicate run no-op)
   workflow_dispatch:
     inputs:
       target_date:

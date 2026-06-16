@@ -328,20 +328,28 @@ async function main() {
   const only = process.argv[2] || 'all';
   const token = await getFeishuToken();
   const tables = await listTables(token);
-  for (const [sheet, name, grp] of SHEETS) {
-    if (only !== 'all' && only !== grp && only !== name) continue;
-    await syncTable(token, sheet, name, tables);
-  }
-  // 每日经营概览 + 数据周报/月报 + 游戏质量分析 + 昨日速览 一并刷新
+
+  const run = (label, p) => p.catch(e => console.error(`  ❌ ${label}:`, e.message));
+
+  // 所有目标 sheet 并行同步(各写独立 Bitable 表,互不依赖)
+  const tasks = SHEETS
+    .filter(([, name, grp]) => only === 'all' || only === grp || only === name)
+    .map(([sheet, name]) => run(name, syncTable(token, sheet, name, tables)));
+
+  // chanpin 附属任务全部读电子表格,与 sheetTasks 无依赖关系,一起并行
   if (only === 'all' || only === 'chanpin') {
-    await require('./build-overview').main();
-    await require('./build-investor-report').main();
-    await require('./build-quality-report').main();
-    await require('./build-yesterday').main();
-    await require('./build-material').main();
-    await require('./sync-qiangzhan').main();
-    await require('./sync-tanchi-pisa').main();
+    tasks.push(
+      run('build-overview',        require('./build-overview').main()),
+      run('build-investor-report', require('./build-investor-report').main()),
+      run('build-quality-report',  require('./build-quality-report').main()),
+      run('build-yesterday',       require('./build-yesterday').main()),
+      run('build-material',        require('./build-material').main()),
+      run('sync-qiangzhan',        require('./sync-qiangzhan').main()),
+      run('sync-tanchi-pisa',      require('./sync-tanchi-pisa').main()),
+    );
   }
+
+  await Promise.all(tasks);
   console.log('同步完成。');
 }
 
