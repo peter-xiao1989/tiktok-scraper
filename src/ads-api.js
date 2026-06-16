@@ -328,19 +328,45 @@ async function readSheetRange(sheetId, range, token) {
   return r.data?.valueRange?.values || [];
 }
 
+// Get total data row count from sheet metadata
+async function getSheetRowCount(token) {
+  const r = await feishuReq('GET',
+    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/query`, token);
+  const sheet = (r.data?.sheets || []).find(s => s.sheet_id === ADS_SHEET_ID);
+  return sheet?.grid_properties?.row_count || 1;
+}
+
 // Build dedup sets from existing sheet data.
 // - dayKeys: "账户|YYYY-MM-DD" — skip whole already-imported account-days (fast path)
 // - rowKeys: 7-dim "日期|游戏|系列|广告组|广告名|素材|账户" — row-level guard so a
 //   concurrent/partial run can never write the same ad twice (the historical
 //   source of duplicate rows). Same key format used by rowKeyOf() below.
-async function getExistingKeys(token) {
+// Only reads the tail of the sheet covering the current pull window + buffer,
+// not the full history (saves ~80% of sheet read API calls on normal runs).
+async function getExistingKeys(token, rowCount) {
+  // Estimate how many days back we need to cover for dedup
+  const ROWS_PER_DAY = 500; // conservative upper bound per account-day
+  let windowDays = 12; // default: 7-day pull + 5-day buffer
+  if (process.env.START_DATE && process.env.END_DATE) {
+    const ms = new Date(process.env.END_DATE) - new Date(process.env.START_DATE);
+    windowDays = Math.ceil(ms / 864e5) + 7;
+  } else if (process.env.TARGET_DATE) {
+    windowDays = 5;
+  } else if (new Date().getDay() === 0) { // Sunday 30-day self-heal
+    windowDays = 37;
+  }
+  const startRow = Math.max(2, rowCount - windowDays * ROWS_PER_DAY);
+  if (startRow > 2) {
+    console.log(`  (dedup tail-read: rows ${startRow}–${rowCount}, skipping ${startRow - 2} historical rows)`);
+  }
+
   const dayKeys = new Set();
   const rowKeys = new Set();
-  let startRow = 2;
+  let cur = startRow;
   while (true) {
-    const endRow = startRow + 999;
+    const endRow = cur + 999;
     // Read B..S (18 cols): B游戏0 C系列1 D按天2 M素材11 N账户12 Q广告组15 S广告名17
-    const rows = await readSheetRange(ADS_SHEET_ID, `B${startRow}:S${endRow}`, token);
+    const rows = await readSheetRange(ADS_SHEET_ID, `B${cur}:S${endRow}`, token);
     if (!rows.length) break;
     let hasData = false;
     for (const row of rows) {
@@ -353,10 +379,10 @@ async function getExistingKeys(token) {
         hasData = true;
       }
     }
-    if (!hasData) break;  // reached empty region beyond actual data
-    process.stdout.write(`\r  read ${startRow + rows.length - 2} rows...`);
+    if (!hasData) break;
+    process.stdout.write(`\r  read ${cur + rows.length - startRow} rows...`);
     if (rows.length < 1000) break;
-    startRow += 1000;
+    cur += 1000;
   }
   process.stdout.write('\n');
   return { dayKeys, rowKeys };
@@ -369,15 +395,9 @@ function rowKeyOf(row) {
     .map(x => String(x ?? '').trim()).join('|');
 }
 
-// Get last seq number (column A)
-async function getLastSeq(token) {
-  // Read the sheet info to get current row count
-  const r = await feishuReq('GET',
-    `/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/sheets/query`, token);
-  const sheet = (r.data?.sheets || []).find(s => s.sheet_id === ADS_SHEET_ID);
-  const rowCount = sheet?.grid_properties?.row_count || 1;
+// Get last seq number (column A); reuses already-fetched rowCount to save an API call
+async function getLastSeq(token, rowCount) {
   if (rowCount <= 1) return 0;
-  // Read last row's A column for the actual seq number
   const vals = await readSheetRange(ADS_SHEET_ID, `A${rowCount}:A${rowCount}`, token);
   return parseInt(vals?.[0]?.[0] || '0', 10) || (rowCount - 1);
 }
@@ -471,12 +491,13 @@ async function main() {
     await clearSheetData(feishuToken);
   }
 
-  console.log('Loading existing keys for dedup...');
-  const { dayKeys: existingKeys, rowKeys } = await getExistingKeys(feishuToken);
-  console.log(`  ${existingKeys.size} account-date pairs, ${rowKeys.size} row keys`);
-
-  let lastSeq = await getLastSeq(feishuToken);
-  console.log(`  Last seq: ${lastSeq}`);
+  const rowCount = await getSheetRowCount(feishuToken);
+  console.log(`Loading existing keys for dedup (${rowCount - 1} total rows)...`);
+  const [{ dayKeys: existingKeys, rowKeys }, lastSeq] = await Promise.all([
+    getExistingKeys(feishuToken, rowCount),
+    getLastSeq(feishuToken, rowCount),
+  ]);
+  console.log(`  ${existingKeys.size} account-date pairs, ${rowKeys.size} row keys, last seq ${lastSeq}`);
 
   console.log('Fetching advertisers...');
   const advertisers = await getAdvertisers(accessToken);
