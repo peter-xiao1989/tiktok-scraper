@@ -34,7 +34,7 @@ jobs:
         run: npm run app-ga4
 
       - name: Notify failure to Feishu
-        if: failure()
+        if: failure() || cancelled()
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |

@@ -72,7 +72,7 @@ jobs:
         run: node src/audit-ads.js
 
       - name: Notify failure to Feishu
-        if: failure()
+        if: failure() || cancelled()
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |
@@ -108,7 +108,7 @@ jobs:
           node src/sync-base.js chanpin
 
       - name: Notify failure to Feishu
-        if: failure()
+        if: failure() || cancelled()
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |
@@ -133,6 +133,14 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
+
+      - name: 数据新鲜度检查（昨日数据是否到位）
+        continue-on-error: true
+        env:
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
+        run: node src/check-freshness.js
 
       - name: 推送投放日报到飞书群
         continue-on-error: true

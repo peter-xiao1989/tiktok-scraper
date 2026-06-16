@@ -87,7 +87,7 @@ jobs:
         run: node src/sync-base.js chanpin
 
       - name: Upload debug screenshots
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: login-debug
@@ -95,7 +95,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Notify failure to Feishu
-        if: failure()
+        if: failure() || cancelled()
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |
