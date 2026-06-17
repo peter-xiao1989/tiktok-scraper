@@ -95,8 +95,24 @@ for r in ref['data']['annotated_csv'].strip().split('\n')[1:]:
 
 # ── Step 2: 读源表，按(游戏×创意)聚合 ───────────────────────────────
 print("读取源表...")
-d = csv_get(SRC_SHEET, "A1:AU3000")
-rows = d['data']['annotated_csv'].strip().split('\n')
+def read_src_rows():
+    """分页读全表数据行(飞书 csv-get 单次约 520 行上限,必须分页)。返回数据行(不含表头)。"""
+    out, start = [], 1
+    while start <= 8000:
+        d = csv_get(SRC_SHEET, f"A{start}:AU{start + 499}")
+        lines = [l for l in d['data']['annotated_csv'].strip().split('\n') if l.strip()]
+        got = len(lines)
+        if start == 1 and lines:
+            lines = lines[1:]
+        if not lines:
+            break
+        out.extend(lines)
+        if got < 500:
+            break
+        start += 500
+    return out
+
+rows = ['__header__'] + read_src_rows()   # 占位表头,保持下方 rows[1:] 不变
 
 agg = defaultdict(lambda: {"spend": 0.0, "activity": 0.0, "impr": 0.0,
                            "clicks": 0.0, "roas_x": 0.0, "perad_x": 0.0,
