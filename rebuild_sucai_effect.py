@@ -95,7 +95,7 @@ for r in ref['data']['annotated_csv'].strip().split('\n')[1:]:
 
 # ── Step 2: 读源表，按(游戏×创意)聚合 ───────────────────────────────
 print("读取源表...")
-d = csv_get(SRC_SHEET, "A1:AU219")
+d = csv_get(SRC_SHEET, "A1:AU3000")
 rows = d['data']['annotated_csv'].strip().split('\n')
 
 agg = defaultdict(lambda: {"spend": 0.0, "activity": 0.0, "impr": 0.0,

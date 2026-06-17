@@ -61,7 +61,7 @@ def csv_get(sheet, rng):
 
 # ── Step 1: 读源表，找消耗>0 的(游戏×出价方式)组合 ──────────────────
 print("读取源表...")
-d = csv_get(SRC_SHEET, "A1:AU219")
+d = csv_get(SRC_SHEET, "A1:AU3000")
 rows = d['data']['annotated_csv'].strip().split('\n')
 
 spend_map = defaultdict(float)
@@ -111,7 +111,7 @@ cells_set("A1:J1", [[
 ]])
 
 # ── Step 4: 数据行 ────────────────────────────────────────────────────
-def val(col, s=2, e=219):
+def val(col, s=2, e=3000):
     """源表某列：IFERROR(VALUE(...), 0)"""
     return f"IFERROR(VALUE('{SRC_NAME}'!{col}{s}:{col}{e}),0)"
 
@@ -119,7 +119,7 @@ print(f"写 {n} 条数据行(一次批量,减少飞书写请求)...")
 data_rows = []
 for i, (game, bid) in enumerate(combos):
     row  = i + 2
-    cond = f"('{SRC_NAME}'!B2:B219=D{row})*('{SRC_NAME}'!AT2:AT219=E{row})"
+    cond = f"('{SRC_NAME}'!B2:B3000=D{row})*('{SRC_NAME}'!AT2:AT3000=E{row})"
     data_rows.append([
         {"value": f"单项目-{i+1}"},                          # A: 类别
         {"formula": f"=IFERROR('{SRC_NAME}'!D2,\"\")"},      # B: 更新时间
@@ -127,14 +127,14 @@ for i, (game, bid) in enumerate(combos):
                     f"MATCH(D{row},'{REF_NAME}'!B2:B100,0)),\"\")"},
         {"value": game},                                      # D: 游戏名称
         {"value": bid},                                       # E: 出价方式
-        {"formula": f"=SUMIFS('{SRC_NAME}'!E2:E219,"         # F: 消耗
-                    f"'{SRC_NAME}'!B2:B219,D{row},"
-                    f"'{SRC_NAME}'!AT2:AT219,E{row})"},
+        {"formula": f"=SUMIFS('{SRC_NAME}'!E2:E3000,"         # F: 消耗
+                    f"'{SRC_NAME}'!B2:B3000,D{row},"
+                    f"'{SRC_NAME}'!AT2:AT3000,E{row})"},
         {"formula": f"=IFERROR(SUMPRODUCT({cond}*{val('E')}*{val('F')})/F{row},0)"},  # G: ROAS
         {"formula": f"=IFERROR(F{row}/I{row},0)"},           # H: 活跃度平均成本
-        {"formula": f"=SUMIFS('{SRC_NAME}'!G2:G219,"         # I: 活跃度
-                    f"'{SRC_NAME}'!B2:B219,D{row},"
-                    f"'{SRC_NAME}'!AT2:AT219,E{row})"},
+        {"formula": f"=SUMIFS('{SRC_NAME}'!G2:G3000,"         # I: 活跃度
+                    f"'{SRC_NAME}'!B2:B3000,D{row},"
+                    f"'{SRC_NAME}'!AT2:AT3000,E{row})"},
         {"formula": f"=IFERROR(SUMPRODUCT({cond}*{val('G')}*{val('I')})/I{row},0)"},  # J: 人均
     ])
 cells_set(f"A2:J{n + 1}", data_rows)   # 一次写 n 行,而不是 n 次请求
