@@ -57,24 +57,52 @@ async function ensureLoggedIn() {
 
 async function browserLogin() {
   console.log('[auth] Browser login started');
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // 隐身启动:降低无头浏览器被反爬识别概率(之前点击后被打回空登录页 = 典型自动化拦截)
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage'],
+  });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    locale: 'en-US',
+    timezoneId: 'Asia/Shanghai',
+  });
+  // 抹掉 navigator.webdriver 等自动化指纹
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+  });
   const page = await context.newPage();
 
   try {
-    await page.goto(`${BASE}/login`, { waitUntil: 'load', timeout: 30000 });
+    await page.goto(`${BASE}/login`, { waitUntil: 'networkidle', timeout: 30000 });
     await page.locator('input[placeholder="Email"]').fill(EMAIL);
+    await page.waitForTimeout(400 + Math.random() * 400);
     await page.locator('input[placeholder="Password"]').fill(PASSWORD);
+    await page.waitForTimeout(400 + Math.random() * 400);
     await page.locator('button[type="submit"]').waitFor({ state: 'visible', timeout: 15000 });
-    // Screenshot before click to debug blocking overlays
     await page.screenshot({ path: path.join(__dirname, '../data/before-click.png'), fullPage: true }).catch(() => {});
-    await page.locator('button[type="submit"]').click({ timeout: 30000, force: true });
+    await page.locator('button[type="submit"]').click({ timeout: 30000 });
+    // 兜底:部分前端不响应 click,补一次回车提交
+    await page.locator('input[placeholder="Password"]').press('Enter').catch(() => {});
 
     // Wait up to 20s for redirect. If still on /login, assume email verification.
     const redirected = await page
       .waitForURL(url => !url.toString().includes('/login'), { timeout: 20000 })
       .then(() => true)
       .catch(() => false);
+
+    // 仍在 /login 时,把页面可见报错文字打到日志,便于判断是密码错/验证码/风控
+    if (!redirected) {
+      const errText = await page.evaluate(() => {
+        const hits = [];
+        document.querySelectorAll('[class*="error" i],[class*="toast" i],[role="alert"],[class*="tip" i]').forEach(e => { const t = (e.innerText || '').trim(); if (t) hits.push(t); });
+        return hits.slice(0, 5).join(' | ');
+      }).catch(() => '');
+      if (errText) console.log(`[auth] 登录页提示文字: ${errText}`);
+    }
 
     if (!redirected) {
       console.log('[auth] Still on /login after 20s — attempting email verification via IMAP');
