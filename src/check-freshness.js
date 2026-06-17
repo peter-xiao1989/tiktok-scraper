@@ -80,19 +80,23 @@ async function main() {
     const tbl = tables.find(t => t.name === name);
     if (!tbl) { console.log(`  ⚠️ ${name}: 表不存在`); stale.push(`${name}（表不存在）`); continue; }
 
-    // 取日期倒序最新 5 条，检查是否有昨日日期
-    const sort = encodeURIComponent(JSON.stringify([{ field_name: field, desc: true }]));
-    const r = await api('GET',
-      `/open-apis/bitable/v1/apps/${BASE}/tables/${tbl.table_id}/records?page_size=5&sort=${sort}`, token);
-    const records = r.data?.items || [];
-
-    let found = false;
-    for (const rec of records) {
-      const v = rec.fields[field];
-      if (v == null) continue;
-      // Bitable 日期字段存毫秒时间戳
-      const s = typeof v === 'number' ? Math.round(v / 864e5) : dateToSerial(String(v));
-      if (s === targetSerial) { found = true; break; }
+    // 不依赖排序(GET 接口 sort 参数格式不可靠,曾导致读到最旧行→误报)。
+    // 直接全表分页扫描,匹配目标日期。表只有几十~几百行,成本可忽略。
+    let found = false, pageToken = '';
+    for (let guard = 0; guard < 50 && !found; guard++) {
+      const qs = `page_size=500${pageToken ? '&page_token=' + encodeURIComponent(pageToken) : ''}`;
+      const r = await api('GET',
+        `/open-apis/bitable/v1/apps/${BASE}/tables/${tbl.table_id}/records?${qs}`, token);
+      const records = r.data?.items || [];
+      for (const rec of records) {
+        const v = rec.fields[field];
+        if (v == null) continue;
+        // Bitable 日期字段存毫秒时间戳
+        const s = typeof v === 'number' ? Math.round(v / 864e5) : dateToSerial(String(v));
+        if (s === targetSerial) { found = true; break; }
+      }
+      if (!r.data?.has_more) break;
+      pageToken = r.data.page_token;
     }
 
     if (found) {
