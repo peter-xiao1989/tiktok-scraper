@@ -493,10 +493,11 @@ async function main() {
 
   const rowCount = await getSheetRowCount(feishuToken);
   console.log(`Loading existing keys for dedup (${rowCount - 1} total rows)...`);
-  const [{ dayKeys: existingKeys, rowKeys }, lastSeq] = await Promise.all([
+  const [{ dayKeys: existingKeys, rowKeys }, lastSeqInit] = await Promise.all([
     getExistingKeys(feishuToken, rowCount),
     getLastSeq(feishuToken, rowCount),
   ]);
+  let lastSeq = lastSeqInit;   // mutable: incremented per new row's seq number
   console.log(`  ${existingKeys.size} account-date pairs, ${rowKeys.size} row keys, last seq ${lastSeq}`);
 
   console.log('Fetching advertisers...');
