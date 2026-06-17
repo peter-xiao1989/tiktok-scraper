@@ -65,16 +65,29 @@ d = csv_get(SRC_SHEET, "A1:AU3000")
 rows = d['data']['annotated_csv'].strip().split('\n')
 
 spend_map = defaultdict(float)
+_diag = {'rows': 0, 'len_bad': 0, 'game_ok': 0, 'spend_pos': 0, 've': 0, 'total': 0.0}
+_games = set()
 for r in rows[1:]:
     clean = re.sub(r'^\[row=\d+\] ', '', r)
     parts = clean.split(',')
+    _diag['rows'] += 1
     if len(parts) < 46 or not parts[1].strip():
+        if len(parts) < 46:
+            _diag['len_bad'] += 1
         continue
     game, bid = parts[1].strip(), parts[45].strip()
+    _games.add(game)
+    _diag['game_ok'] += 1
     try:
-        spend_map[(game, bid)] += float(parts[4]) if parts[4].strip() else 0.0
+        sp = float(parts[4]) if parts[4].strip() else 0.0
+        spend_map[(game, bid)] += sp
+        _diag['total'] += sp
+        if sp > 0:
+            _diag['spend_pos'] += 1
     except ValueError:
-        pass
+        _diag['ve'] += 1
+print(f"[diag] {_diag} distinct_games={len(_games)}")
+print(f"[diag] games={sorted(_games)[:40]}")
 
 combos = sorted(
     [(g, b) for (g, b), s in spend_map.items() if s > 0],
