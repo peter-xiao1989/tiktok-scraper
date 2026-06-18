@@ -1,0 +1,39 @@
+name: 内容热榜采集 (09:00 BJT)
+
+on:
+  schedule:
+    - cron: '0 1 * * *'    # 09:00 BJT，每天刷新当地最火爆款创意
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: '地区 (默认 US,GB,DE,FR)'
+        required: false
+      topn:
+        description: '每地区取条数 (默认 60)'
+        required: false
+
+concurrency:
+  group: trends-daily
+  cancel-in-progress: false
+
+jobs:
+  trends:
+    name: TikTok 创意中心 Top Ads → 工作台内容热榜
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - name: 采集并入库
+        env:
+          WB_BASE:        ${{ secrets.WB_BASE || 'https://tt-ads-workbench.xiaohuipeng123.workers.dev' }}
+          WB_SETUP_KEY:   ${{ secrets.WB_SETUP_KEY }}
+          TR_REGIONS:     ${{ github.event.inputs.regions || 'US,GB,DE,FR' }}
+          TR_TOPN:        ${{ github.event.inputs.topn || '60' }}
+          TR_PERIOD:      '7'
+        run: node src/trends-scrape.js
