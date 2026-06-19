@@ -8,8 +8,9 @@ const fs = require('fs');
 const path = require('path');
 
 const STATE = path.join(__dirname, '../data/cc-auth-state.json');
-const EMAIL = process.env.ADS_EMAIL || process.env.TIKTOK_EMAIL || 'peter@kuaiql.com';
-const PASSWORD = process.env.ADS_PASSWORD || process.env.TIKTOK_PASSWORD || '';
+// 优先用 TIKTOK_EMAIL(163 账号)——它的验证码 email-code.js 能从 163 IMAP 读到；ADS_EMAIL(peter@kuaiql.com)的码读不到。
+const EMAIL = process.env.TIKTOK_EMAIL || process.env.ADS_EMAIL || '';
+const PASSWORD = process.env.TIKTOK_PASSWORD || process.env.ADS_PASSWORD || '';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 const CC_PROBE = 'https://ads.tiktok.com/business/creativecenter/inspiration/popular/hashtag/pc/en?region=US&period=7';
 
