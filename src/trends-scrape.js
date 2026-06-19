@@ -11,6 +11,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const https = require('https');
+const LOGIN = process.env.TR_LOGIN === '1';   // 登录态深抓（View More 翻页解锁 100/榜）
 
 const REGIONS = (process.env.TR_REGIONS || 'US,GB,DE,FR').split(',').map(s => s.trim()).filter(Boolean);
 const PERIODS = (process.env.TR_PERIODS || '7,30').split(',').map(s => s.trim()).filter(Boolean);
@@ -63,6 +64,18 @@ async function scrapeRegionPeriod(page, region, period, industryMap) {
     const url = `https://ads.tiktok.com/business/creativecenter/inspiration/topads/pad/en?period=${period}&region=${region}&order_by=${order}&page=1`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
     await page.waitForTimeout(4500);
+    // 登录态：点 View More 翻页到 TOPN（匿名点不动；登录后每榜可达 ~100）
+    if (LOGIN) {
+      for (let k = 0; k < Math.ceil(TOPN / 20) + 2; k++) {
+        const before = pending.length;
+        const btn = page.getByText('View More', { exact: true }).last();
+        if (!(await btn.isVisible().catch(() => false))) break;
+        await btn.scrollIntoViewIfNeeded().catch(() => {});
+        await btn.click({ timeout: 6000 }).catch(() => {});
+        await page.waitForTimeout(2500);
+        if (pending.length === before) break;   // 没加载出更多就停
+      }
+    }
     for (const ad of pending) {
       const id = String(ad.id || '');
       if (!id || seen.has(id)) continue;
@@ -87,11 +100,17 @@ async function scrapeRegionPeriod(page, region, period, industryMap) {
 
 (async () => {
   const snap_date = bjDate();
-  const browser = await chromium.launch();
-  const ctx = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
-    locale: 'en-US', viewport: { width: 1440, height: 900 },
-  });
+  const browser = await chromium.launch({ headless: !LOGIN, args: ['--no-sandbox'] });   // 登录态走 headed(配 xvfb)，TikTok 对 headless 登录风控更狠
+  let ctx;
+  if (LOGIN) {
+    const { loggedInContext } = require('./trends-login');
+    ctx = await loggedInContext(browser);
+  } else {
+    ctx = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+      locale: 'en-US', viewport: { width: 1440, height: 900 },
+    });
+  }
   const page = await ctx.newPage();
   const industryMap = {};
   const all = [];
