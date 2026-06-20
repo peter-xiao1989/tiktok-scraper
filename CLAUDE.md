@@ -47,6 +47,7 @@ TikTok realtime ──realtime(每小时*)─────────┘
 - `sheets_to_base.py` 已被 `src/sync-base.js` 取代(node 版可靠、能去序号、类型正确),保留备查。
 - 本地验证衍生表:`FEISHU_APP_SECRET=… node -e "…ensureReportFormulas/ensureDailySummary…"`(见 src/build-summaries.js exports)
 - 外部准点调度:见 `scheduler/README.md`
+- **内容热榜采集(TikTok 创意中心 Top Ads,2026-06-19)**:`src/trends-scrape.js`→工作台 `POST /api/trends/ingest`(WB_SETUP_KEY)→「内容热榜」页签;`src/trends-to-sql.js` 本地灌库;`trends-daily.yml`(09:00 BJT,匿名)。⚠️ **创意中心匿名每榜硬上限 20 条**(View More 需登录;`?page=`/`?industry=` 被 SPA 忽略;页内直连签名 API 一律 40101,replay 不了)→匿名跨 region×period×order 去重约 172/天。要更多量必须登录:fresh 自动登录撞**视觉形状验证码**(ddddocr 解不了),只能 `src/cc-capture.js` 人工登录一次存 storageState→设 `CC_COOKIES` secret→`trends-deep.yml`(TR_LOGIN=1,headed+xvfb)用 View More 翻页冲 ~100/榜。详见工作台 `specs/2026-06-19-内容热榜页签.md`。
 
 ## 两条产品线(严格隔离)
 
