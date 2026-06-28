@@ -40,21 +40,39 @@ async function getTenantToken(appId, appSecret) {
   });
 }
 
+// 优先从 D1 名册端点取(飞书 sheets 配额已不可靠);失败再回退飞书 juQobR。
+async function loadFromD1() {
+  const base = process.env.ANALYTICS_URL, tok = process.env.EXPORT_TOKEN;
+  if (!base || !tok) return [];
+  const url = base.replace(/\/$/, '') + '/api/export/roster?token=' + encodeURIComponent(tok);
+  const r = await new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET' }, res => {
+      let buf = ''; res.on('data', c => buf += c); res.on('end', () => { try { resolve(JSON.parse(buf)); } catch { resolve(null); } });
+    });
+    req.on('error', reject); req.end();
+  });
+  return (r && r.games || []).map(g => ({ group: g.group || '', name: g.game || '', id: String(g.minis_id || '').trim() })).filter(g => g.id && g.name);
+}
+
 async function loadGames(appId, appSecret) {
+  let games = [];
+  try { games = await loadFromD1(); } catch (e) { console.error('D1 roster failed, fallback Feishu:', e.message); }
+  if (games.length) { console.log(`名录来源 D1: ${games.length} 个游戏`); return games; }
   const token = await getTenantToken(appId, appSecret);
   const res = await httpGet(
     `/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${GAMES_SHEET_ID}!A2:C200`,
     token
   );
   const rows = res.data?.valueRange?.values || [];
-  const games = rows
+  games = rows
     .map(r => ({
       group: String(r[0] ?? '').trim(),
       name:  String(r[1] ?? '').trim(),
       id:    String(r[2] ?? '').trim(),
     }))
     .filter(g => g.id && g.name);
-  if (!games.length) throw new Error('产品id及链接 returned no games with id — refusing to scrape an empty roster');
+  if (!games.length) throw new Error('名册为空(D1+飞书均无 minis_id)— 拒绝抓空名册');
   return games;
 }
 

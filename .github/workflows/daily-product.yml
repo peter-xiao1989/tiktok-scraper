@@ -48,6 +48,8 @@ jobs:
           FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
+          ANALYTICS_URL:     ${{ secrets.ANALYTICS_URL }}
+          EXPORT_TOKEN:      ${{ secrets.EXPORT_TOKEN }}
           TARGET_DATE:       ${{ github.event.inputs.target_date }}
           START_DATE:        ${{ github.event.inputs.start_date }}
           END_DATE:          ${{ github.event.inputs.end_date }}
