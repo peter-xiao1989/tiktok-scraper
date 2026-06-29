@@ -89,6 +89,32 @@ async function fetchRetention(p, dates) {
   return ret;
 }
 
+// 事件埋点:日期×事件 → 触发用户/次数
+async function fetchEvents(p) {
+  const r = await ga4(p.property, {
+    dateRanges: [{ startDate: `${DAYS}daysAgo`, endDate: 'yesterday' }],
+    dimensions: [{ name: 'date' }, { name: 'eventName' }],
+    metrics: [{ name: 'eventCount' }, { name: 'activeUsers' }],
+    limit: 200000,
+  });
+  const out = [];
+  for (const row of r.rows || []) {
+    const d = row.dimensionValues[0].value, ev = row.dimensionValues[1].value;
+    if (!/^\d{8}$/.test(d) || !ev) continue;
+    const [cnt, users] = row.metricValues.map(v => parseFloat(v.value) || 0);
+    out.push({ d, ev, cnt, users });
+  }
+  return out;
+}
+// 激活漏斗步骤映射(Firebase 常见事件;按实际存在的事件取 max 用户数)
+const FUNNEL_STEPS = [
+  { key: 'first_open', name: '首次打开', cands: ['first_open'] },
+  { key: 'session', name: '会话开始', cands: ['session_start'] },
+  { key: 'tutorial', name: '新手引导', cands: ['tutorial_begin', 'tutorial_complete', 'tutorial_start', 'guide_start', 'newbie_guide', 'guide_complete'] },
+  { key: 'play', name: '开始游戏/首关', cands: ['level_start', 'level_begin', 'game_start', 'level_up', 'round_start'] },
+  { key: 'monetize', name: '变现(广告/内购)', cands: ['ad_impression', 'rewarded_ad', 'ad_reward', 'ad_show', 'rewarded_ad_complete', 'in_app_purchase', 'purchase'] },
+];
+
 async function postRows(rows) {
   for (let i = 0; i < rows.length; i += 2000) {
     const chunk = rows.slice(i, i + 2000), body = JSON.stringify({ rows: chunk });
@@ -98,17 +124,27 @@ async function postRows(rows) {
   }
 }
 
+async function postBehavior(events, funnel, levels) {
+  for (let i = 0; i < events.length; i += 3000) {
+    const body = JSON.stringify({ events: events.slice(i, i + 3000) });
+    const r = await req(new URL(ANALYTICS_URL).hostname, 'POST', `/api/ingest/app-behavior?token=${encodeURIComponent(TOKEN)}`, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, body);
+    if (!r.ok) throw new Error('behavior(events) failed: ' + JSON.stringify(r).slice(0, 150));
+  }
+  const body = JSON.stringify({ funnel, levels });
+  const r = await req(new URL(ANALYTICS_URL).hostname, 'POST', `/api/ingest/app-behavior?token=${encodeURIComponent(TOKEN)}`, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, body);
+  if (!r.ok) throw new Error('behavior(funnel) failed: ' + JSON.stringify(r).slice(0, 150));
+  console.log(`  行为:事件 ${events.length} / 漏斗 ${funnel.length} / 关卡 ${levels.length}`);
+}
+
 async function main() {
   GTOK = await googleToken();
-  const all = [];
+  const all = [], evRows = [], fnRows = [], evNames = {};
   for (const p of PROPERTIES) {
     const daily = await fetchByCountry(p);
     const nuDates = [...new Set(daily.filter(x => x.nu > 0).map(x => x.d))].sort();
     const ret = await fetchRetention(p, nuDates);
-    // 属性级当日留存(各国共享同一 cohort 比率,近似)
-    const retByDate = ret;
     for (const x of daily) {
-      const rt = retByDate[x.d] || {};
+      const rt = ret[x.d] || {};
       all.push({
         stat_date: isoOf(x.d), project: p.app, platform: p.platform, country: x.country,
         new_users: Math.round(x.nu), dau: Math.round(x.au), sessions: Math.round(x.se),
@@ -118,10 +154,29 @@ async function main() {
         mau: 0, paying_users: 0, ad_impressions: 0, ecpm: 0, src_currency: 'USD',
       });
     }
-    console.log(`  ${p.app}-${p.platform}: ${daily.length} 行(国家×日), 留存 ${Object.keys(ret).length} cohort`);
+    // 事件埋点 + 漏斗
+    const events = await fetchEvents(p);
+    const byDate = {};
+    for (const e of events) {
+      (byDate[e.d] = byDate[e.d] || {})[e.ev] = { users: e.users, cnt: e.cnt };
+      evNames[e.ev] = (evNames[e.ev] || 0) + e.users;
+      evRows.push({ stat_date: isoOf(e.d), project: p.app, platform: p.platform, country: 'ALL', event_name: e.ev, event_users: Math.round(e.users), event_count: Math.round(e.cnt) });
+    }
+    for (const [d, evs] of Object.entries(byDate)) {
+      FUNNEL_STEPS.forEach((s, i) => {
+        const users = Math.max(0, ...s.cands.map(c => evs[c]?.users || 0));
+        if (users > 0) fnRows.push({ stat_date: isoOf(d), project: p.app, platform: p.platform, country: 'ALL', step_order: i, step_key: s.key, step_name: s.name, users: Math.round(users) });
+      });
+    }
+    console.log(`  ${p.app}-${p.platform}: ${daily.length} 行(国家×日), 留存 ${Object.keys(ret).length} cohort, 事件 ${events.length} 行`);
   }
-  console.log(`总计 ${all.length} 行 → ${ANALYTICS_URL}`);
+  // 打印事件清单(供漏斗/关卡映射核对)
+  const topEv = Object.entries(evNames).sort((a, b) => b[1] - a[1]).slice(0, 60);
+  console.log('── GA4 事件清单(按用户量,前60) ──');
+  topEv.forEach(([n, u]) => console.log(`  ${n}\t${Math.round(u)}`));
+  console.log(`总计 app_daily ${all.length} 行 → ${ANALYTICS_URL}`);
   await postRows(all);
-  console.log('✅ APP→D1 同步完成');
+  await postBehavior(evRows, fnRows, []);
+  console.log('✅ APP→D1 同步完成(含行为埋点)');
 }
 main().catch(e => { console.error('ERR', e.message); process.exit(1); });
