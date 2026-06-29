@@ -106,14 +106,33 @@ async function fetchEvents(p) {
   }
   return out;
 }
-// 激活漏斗步骤映射(Firebase 常见事件;按实际存在的事件取 max 用户数)
+// 激活漏斗(按 GA4 实际埋点事件;每步取候选事件最大用户数)
 const FUNNEL_STEPS = [
   { key: 'first_open', name: '首次打开', cands: ['first_open'] },
-  { key: 'session', name: '会话开始', cands: ['session_start'] },
-  { key: 'tutorial', name: '新手引导', cands: ['tutorial_begin', 'tutorial_complete', 'tutorial_start', 'guide_start', 'newbie_guide', 'guide_complete'] },
-  { key: 'play', name: '开始游戏/首关', cands: ['level_start', 'level_begin', 'game_start', 'level_up', 'round_start'] },
-  { key: 'monetize', name: '变现(广告/内购)', cands: ['ad_impression', 'rewarded_ad', 'ad_reward', 'ad_show', 'rewarded_ad_complete', 'in_app_purchase', 'purchase'] },
+  { key: 'guide_enter', name: '进入新手引导', cands: ['guide_level_enter', 'tutorial_start'] },
+  { key: 'guide_finish', name: '完成新手引导', cands: ['guide_all_finish', 'tutorial_complete'] },
+  { key: 'first_level', name: '进入首关', cands: ['level_enter_1_a', 'level_enter_1'] },
+  { key: 'monetize', name: '广告变现', cands: ['ad_impression'] },
 ];
+// 关卡进阶:level_enter_N_* = 到达 / level_success_N_* = 通关(各关 unique 用户,窗口期)
+async function fetchLevels(p) {
+  const r = await ga4(p.property, {
+    dateRanges: [{ startDate: `${DAYS}daysAgo`, endDate: 'yesterday' }],
+    dimensions: [{ name: 'eventName' }], metrics: [{ name: 'activeUsers' }], limit: 5000,
+  });
+  const reached = {}, done = {};
+  for (const row of r.rows || []) {
+    const ev = row.dimensionValues[0].value, u = parseFloat(row.metricValues[0].value) || 0;
+    let m = /^level_enter_(\d+)/.exec(ev); if (m) { reached[+m[1]] = (reached[+m[1]] || 0) + u; continue; }
+    m = /^level_success_(\d+)/.exec(ev); if (m) done[+m[1]] = (done[+m[1]] || 0) + u;
+  }
+  const out = [];
+  for (const n of Object.keys(reached).map(Number).sort((a, b) => a - b)) {
+    const rc = Math.round(reached[n]), cp = Math.round(done[n] || 0);
+    out.push({ project: p.app, platform: p.platform, country: 'ALL', level_number: n, reached_users: rc, completed_users: cp, fail_count: Math.max(0, rc - cp) });
+  }
+  return out;
+}
 
 async function postRows(rows) {
   for (let i = 0; i < rows.length; i += 2000) {
@@ -138,7 +157,7 @@ async function postBehavior(events, funnel, levels) {
 
 async function main() {
   GTOK = await googleToken();
-  const all = [], evRows = [], fnRows = [], evNames = {};
+  const all = [], evRows = [], fnRows = [], lvRows = [], evNames = {};
   for (const p of PROPERTIES) {
     const daily = await fetchByCountry(p);
     const nuDates = [...new Set(daily.filter(x => x.nu > 0).map(x => x.d))].sort();
@@ -168,7 +187,9 @@ async function main() {
         if (users > 0) fnRows.push({ stat_date: isoOf(d), project: p.app, platform: p.platform, country: 'ALL', step_order: i, step_key: s.key, step_name: s.name, users: Math.round(users) });
       });
     }
-    console.log(`  ${p.app}-${p.platform}: ${daily.length} 行(国家×日), 留存 ${Object.keys(ret).length} cohort, 事件 ${events.length} 行`);
+    const lvs = await fetchLevels(p);
+    lvRows.push(...lvs);
+    console.log(`  ${p.app}-${p.platform}: ${daily.length} 行(国家×日), 留存 ${Object.keys(ret).length} cohort, 事件 ${events.length} 行, 关卡 ${lvs.length}`);
   }
   // 打印事件清单(供漏斗/关卡映射核对)
   const topEv = Object.entries(evNames).sort((a, b) => b[1] - a[1]).slice(0, 60);
@@ -176,7 +197,7 @@ async function main() {
   topEv.forEach(([n, u]) => console.log(`  ${n}\t${Math.round(u)}`));
   console.log(`总计 app_daily ${all.length} 行 → ${ANALYTICS_URL}`);
   await postRows(all);
-  await postBehavior(evRows, fnRows, []);
+  await postBehavior(evRows, fnRows, lvRows);
   console.log('✅ APP→D1 同步完成(含行为埋点)');
 }
 main().catch(e => { console.error('ERR', e.message); process.exit(1); });
