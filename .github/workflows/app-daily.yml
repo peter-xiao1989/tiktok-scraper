@@ -26,19 +26,20 @@ jobs:
 
       - run: npm ci
 
-      - name: Fetch GA4 → sync bitable
-        env:
-          GA4_SA_JSON:       ${{ secrets.GA4_SA_JSON }}
-          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-        run: npm run app-ga4
-
       - name: Fetch GA4 → KQL 经分后台 D1(app_daily)
         env:
           GA4_SA_JSON:   ${{ secrets.GA4_SA_JSON }}
           ANALYTICS_URL: ${{ secrets.ANALYTICS_URL }}
           EXPORT_TOKEN:  ${{ secrets.EXPORT_TOKEN }}
         run: node src/apps/fetch-ga4-d1.js
+
+      - name: Fetch GA4 → sync bitable
+        if: always()
+        env:
+          GA4_SA_JSON:       ${{ secrets.GA4_SA_JSON }}
+          FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: npm run app-ga4
 
       - name: Notify failure to Feishu
         if: failure() || cancelled()
