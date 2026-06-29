@@ -93,9 +93,9 @@ jobs:
           pip install -q matplotlib
           python3 render_report.py fenshi
 
-      # 逐表汇报:全绿静默,有未更新才推送。核心抓取失败=🔴,仅下游表失败=🟡(下次自动补)
+      # 逐表汇报(已停用:实时已迁移到 KQL 分析台,旧分时飞书管道告警为噪音)
       - name: 汇报刷新结果到飞书
-        if: always()
+        if: false
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
         run: |
