@@ -71,19 +71,7 @@ jobs:
           done
           echo "all attempts failed"; exit 1
 
-      # 产品数据直推 KQL 分析台 D1(收入随当天结算自动更新;飞书写失败也不影响这步)
-      - name: Product → KQL 分析台 D1
-        if: always()
-        continue-on-error: true
-        env:
-          TIKTOK_COOKIES:  ${{ secrets.TIKTOK_COOKIES }}
-          TIKTOK_EMAIL:    ${{ secrets.TIKTOK_EMAIL }}
-          TIKTOK_PASSWORD: ${{ secrets.TIKTOK_PASSWORD }}
-          EMAIL_163_PASS:  ${{ secrets.EMAIL_163_PASS }}
-          ANALYTICS_URL:   ${{ secrets.ANALYTICS_URL }}
-          EXPORT_TOKEN:    ${{ secrets.EXPORT_TOKEN }}
-        run: node src/product-to-d1.js
-
+      # 注:产品数据已由 product-api 抓完直推 KQL D1(见上,飞书写入非致命),无需单独 product-to-d1 步
       - name: Audit 产品数据缺口(近14天)
         continue-on-error: true
         env:

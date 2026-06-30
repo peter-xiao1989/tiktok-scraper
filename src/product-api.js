@@ -61,6 +61,35 @@ function toISO(v) {
   return String(v).slice(0, 10);
 }
 
+// ─── KQL 分析台 D1 直推(抓完即写,独立于飞书;飞书配额死也照样进 D1) ──────────────
+const _pn = v => { if (v == null || v === '') return 0; const n = parseFloat(String(v).replace(/[,%]/g, '')); return isNaN(n) ? 0 : n; };
+const _pp = v => _pn(v) / 100;   // 百分比文本 → 小数
+function _serial(d) { const m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(d)); return m ? Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) + 25569 : 0; }
+function mapToD1(row, date) {
+  return {
+    stat_date: date, stat_serial: _serial(date),
+    group_name: row.项目组 || '', game: row.游戏名称 || '',
+    new_users: _pn(row.新增用户), active_users: _pn(row.活跃用户),
+    ad_revenue: _pn(row.广告总收入), ad_impressions: _pn(row.广告曝光量),
+    ret_d1: _pp(row.次留), ret_d7: _pp(row.七日留存), ret_d14: _pp(row.十四日留存), ret_d30: _pp(row.三十日留存),
+    ecpm: _pn(row.eCPM), portal_json: JSON.stringify(row),
+  };
+}
+async function postProductsD1(d1Rows) {
+  const url = (process.env.ANALYTICS_URL || '').replace(/\/$/, ''), tok = process.env.EXPORT_TOKEN;
+  if (!url || !tok || !d1Rows.length) return;
+  const https = require('https');
+  for (let i = 0; i < d1Rows.length; i += 40) {
+    const body = JSON.stringify({ rows: d1Rows.slice(i, i + 40) });
+    await new Promise((res, rej) => {
+      const u = new URL(url + '/api/ingest/products?token=' + encodeURIComponent(tok));
+      const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, rs => { let c = ''; rs.on('data', d => c += d); rs.on('end', () => { try { JSON.parse(c).ok ? res() : rej(new Error(c.slice(0, 150))); } catch { rej(new Error(c.slice(0, 150))); } }); });
+      req.on('error', rej); req.write(body); req.end();
+    });
+  }
+  console.log(`✅ POST ${d1Rows.length} 行 → KQL 分析台 D1`);
+}
+
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 // Returns array matching columns A-AO of sheet c50205 (43 cols)
@@ -319,26 +348,30 @@ async function main() {
 
   // Scrape everything first; we only touch the sheet AFTER a successful scrape,
   // so a failed login can never delete a day's rows without re-writing them.
-  const allRows = [];
+  const allRows = [], d1Rows = [];
   for (const date of dates) {
     process.stdout.write(`\n[${date}] scraping ${games.length} games...\n`);
     const results = await scrapeAll(games, date, portalCookies, dataCookies);
     for (const result of results) {
       if (!result.ok) continue;
       allRows.push(recordToRow(result.row, ++lastSeq));
+      d1Rows.push(mapToD1(result.row, date));
     }
   }
 
+  // 优先直推 KQL 分析台 D1(抓完即写,与飞书完全解耦——飞书配额死也不影响 D1)
+  if (d1Rows.length) { try { await postProductsD1(d1Rows); } catch (e) { console.error('D1 直推失败:', e.message); } }
+
   if (allRows.length) {
-    // Overwrite the target dates: delete their old rows (the early/partial scrape)
-    // now that we have fresh settled data, then append. Skipped on CLEAR_BEFORE
-    // (sheet already emptied).
-    if (!isClear) {
-      console.log('\nReplacing target-date rows (delete old, then append fresh)...');
-      await deleteRowsByDates(feishuToken, new Set(dates));
-    }
-    console.log(`Writing ${allRows.length} rows...`);
-    await appendRows(allRows, feishuToken);
+    // 飞书写入:配额满/失败仅告警,不让整步失败(避免拖累 D1 自动化)
+    try {
+      if (!isClear) {
+        console.log('\nReplacing target-date rows (delete old, then append fresh)...');
+        await deleteRowsByDates(feishuToken, new Set(dates));
+      }
+      console.log(`Writing ${allRows.length} rows...`);
+      await appendRows(allRows, feishuToken);
+    } catch (e) { console.error('⚠️ 飞书写入失败(不影响 D1,已入库):', e.message); }
   } else {
     console.log('\nNo product rows scraped — keeping existing data (no delete).');
   }
