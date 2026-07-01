@@ -33,8 +33,10 @@ jobs:
           EXPORT_TOKEN:  ${{ secrets.EXPORT_TOKEN }}
         run: node src/apps/fetch-ga4-d1.js
 
+      # 旧飞书多维表同步:配额死时失败不拖垮 workflow(APP 数据已进分析台 D1),避免误报
       - name: Fetch GA4 → sync bitable
         if: always()
+        continue-on-error: true
         env:
           GA4_SA_JSON:       ${{ secrets.GA4_SA_JSON }}
           FEISHU_APP_ID:     ${{ secrets.FEISHU_APP_ID }}
