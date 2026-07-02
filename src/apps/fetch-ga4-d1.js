@@ -111,11 +111,11 @@ async function fetchEvents(p) {
 // 两款游戏埋点体系不同,按游戏各建(积木用 tutorial_*,麻将用 guide_*)。
 const ACTIVATION = {
   // 注:完成引导只取规范事件 tutorial_complete(tutorial_finish 是重复埋点,混用会经 per-day max 虚高)
+  // tutorial_step_1 漏报(实测 <tutorial_complete),不可靠,已剔除
   '积木': [
     { key: 'first_open', name: '首次打开', cands: ['first_open'] },
     { key: 'load_finish', name: '加载完成(新用户)', cands: ['cold_launch_finish', 'loading_complete'] },
     { key: 'guide_enter', name: '进入新手引导', cands: ['tutorial_start', 'show_tutorial_intro', 'tutorial_level_enter'] },
-    { key: 'guide_step1', name: '完成引导第1步', cands: ['tutorial_step_1'] },
     { key: 'guide_finish', name: '完成新手引导', cands: ['tutorial_complete'] },
   ],
   '麻将': [
