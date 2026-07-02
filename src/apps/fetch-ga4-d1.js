@@ -110,12 +110,13 @@ async function fetchEvents(p) {
 // 每次进关(level_enter)/每次曝光(ad_impression)会重复触发,累加会灌成几倍,绝不能放进激活漏斗。
 // 两款游戏埋点体系不同,按游戏各建(积木用 tutorial_*,麻将用 guide_*)。
 const ACTIVATION = {
-  // 注:积木 tutorial_step_1 埋点漏报(实测 <tutorial_complete),不可靠,已剔除
+  // 注:完成引导只取规范事件 tutorial_complete(tutorial_finish 是重复埋点,混用会经 per-day max 虚高)
   '积木': [
     { key: 'first_open', name: '首次打开', cands: ['first_open'] },
     { key: 'load_finish', name: '加载完成(新用户)', cands: ['cold_launch_finish', 'loading_complete'] },
     { key: 'guide_enter', name: '进入新手引导', cands: ['tutorial_start', 'show_tutorial_intro', 'tutorial_level_enter'] },
-    { key: 'guide_finish', name: '完成新手引导', cands: ['tutorial_complete', 'tutorial_finish'] },
+    { key: 'guide_step1', name: '完成引导第1步', cands: ['tutorial_step_1'] },
+    { key: 'guide_finish', name: '完成新手引导', cands: ['tutorial_complete'] },
   ],
   '麻将': [
     { key: 'first_open', name: '首次打开', cands: ['first_open'] },
@@ -133,8 +134,8 @@ const AD_FUNNEL = {
     { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward', 'ad_reward_reward'] },
   ],
   '麻将': [
-    { key: 'adf_show', name: '激励广告发起', cands: ['ad_reward_show_start', 'ad_reward_show'] },
-    { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward_reward', 'ad_reward'] },
+    { key: 'adf_show', name: '激励广告发起', cands: ['ad_reward_show_start'] },
+    { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward_reward'] },
   ],
 };
 // 关卡进阶:level_enter_N_* = 到达 / level_success_N_* = 通关(各关 unique 用户,窗口期)
