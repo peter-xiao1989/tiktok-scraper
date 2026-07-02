@@ -106,14 +106,38 @@ async function fetchEvents(p) {
   }
   return out;
 }
-// 激活漏斗(按 GA4 实际埋点事件;每步取候选事件最大用户数)
-const FUNNEL_STEPS = [
-  { key: 'first_open', name: '首次打开', cands: ['first_open'] },
-  { key: 'guide_enter', name: '进入新手引导', cands: ['guide_level_enter', 'tutorial_start'] },
-  { key: 'guide_finish', name: '完成新手引导', cands: ['guide_all_finish', 'tutorial_complete'] },
-  { key: 'first_level', name: '进入首关', cands: ['level_enter_1_a', 'level_enter_1'] },
-  { key: 'monetize', name: '广告变现', cands: ['ad_impression'] },
-];
+// 激活漏斗:只用"每新用户仅 1 次"的引导事件——窗口内按日去重用户累加=区间新用户数,漏斗才单调可信。
+// 每次进关(level_enter)/每次曝光(ad_impression)会重复触发,累加会灌成几倍,绝不能放进激活漏斗。
+// 两款游戏埋点体系不同,按游戏各建(积木用 tutorial_*,麻将用 guide_*)。
+const ACTIVATION = {
+  '积木': [
+    { key: 'first_open', name: '首次打开', cands: ['first_open'] },
+    { key: 'load_finish', name: '加载完成(新用户)', cands: ['cold_launch_finish', 'loading_complete'] },
+    { key: 'guide_enter', name: '进入新手引导', cands: ['tutorial_start', 'show_tutorial_intro', 'tutorial_level_enter'] },
+    { key: 'guide_step1', name: '完成引导第1步', cands: ['tutorial_step_1'] },
+    { key: 'guide_finish', name: '完成新手引导', cands: ['tutorial_complete', 'tutorial_finish'] },
+  ],
+  '麻将': [
+    { key: 'first_open', name: '首次打开', cands: ['first_open'] },
+    { key: 'guide_enter', name: '进入新手引导', cands: ['guide_level_enter'] },
+    { key: 'guide_step1', name: '完成引导第1步', cands: ['guide_step_1_complete'] },
+    { key: 'guide_step3', name: '完成引导第3步', cands: ['guide_step_3_complete'] },
+    { key: 'guide_finish', name: '完成新手引导', cands: ['guide_all_finish'] },
+  ],
+};
+// 激励广告漏斗:发起→完播→发奖(完播率/发放率=IAA 变现健康度)。step_order 20+ 与激活漏斗区分。
+const AD_FUNNEL = {
+  '积木': [
+    { key: 'adf_show', name: '激励广告发起', cands: ['ad_reward_show', 'ad_reward_show_start'] },
+    { key: 'adf_complete', name: '完播', cands: ['ad_reward_finish', 'ad_reward_show_success'] },
+    { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward', 'ad_reward_reward'] },
+  ],
+  '麻将': [
+    { key: 'adf_show', name: '激励广告发起', cands: ['ad_reward_show_start', 'ad_reward_show'] },
+    { key: 'adf_complete', name: '完播', cands: ['ad_reward_show_success'] },
+    { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward_reward', 'ad_reward'] },
+  ],
+};
 // 关卡进阶:level_enter_N_* = 到达 / level_success_N_* = 通关(各关 unique 用户,窗口期)
 async function fetchLevels(p) {
   const r = await ga4(p.property, {
@@ -181,11 +205,14 @@ async function main() {
       evNames[e.ev] = (evNames[e.ev] || 0) + e.users;
       evRows.push({ stat_date: isoOf(e.d), project: p.app, platform: p.platform, country: 'ALL', event_name: e.ev, event_users: Math.round(e.users), event_count: Math.round(e.cnt) });
     }
+    const actSteps = ACTIVATION[p.app] || [], adSteps = AD_FUNNEL[p.app] || [];
     for (const [d, evs] of Object.entries(byDate)) {
-      FUNNEL_STEPS.forEach((s, i) => {
+      const push = (s, order) => {
         const users = Math.max(0, ...s.cands.map(c => evs[c]?.users || 0));
-        if (users > 0) fnRows.push({ stat_date: isoOf(d), project: p.app, platform: p.platform, country: 'ALL', step_order: i, step_key: s.key, step_name: s.name, users: Math.round(users) });
-      });
+        if (users > 0) fnRows.push({ stat_date: isoOf(d), project: p.app, platform: p.platform, country: 'ALL', step_order: order, step_key: s.key, step_name: s.name, users: Math.round(users) });
+      };
+      actSteps.forEach((s, i) => push(s, i));
+      adSteps.forEach((s, i) => push(s, 20 + i));
     }
     const lvs = await fetchLevels(p);
     lvRows.push(...lvs);
