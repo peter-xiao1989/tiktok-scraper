@@ -89,9 +89,26 @@ function aggregate(daysInPeriod, allByDate, label, prevAgg) {
   return { sp, rev, nu, adW, cumROI, revROI, spChg, label, comment: parts.join(' · ') + ' → ' + verdict };
 }
 
+// D1 导出取数(API 真值),替代读飞书衍生表 wAsSso。ws 同 wAsSso A-H(G列=累计ROI)。
+function fetchD1(path) {
+  const base = process.env.ANALYTICS_URL, tok = process.env.EXPORT_TOKEN;
+  if (!base || !tok) throw new Error('缺少 ANALYTICS_URL / EXPORT_TOKEN');
+  const u = new URL(`${base}${path}${path.includes('?') ? '&' : '?'}token=${tok}`);
+  return new Promise((res, rej) => {
+    const r = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET', timeout: 25000 }, rs => {
+      const c = []; rs.on('data', x => c.push(x));
+      rs.on('end', () => { try { res(JSON.parse(Buffer.concat(c).toString('utf8'))); } catch (e) { rej(new Error('export 非 JSON')); } });
+    });
+    r.on('timeout', () => { r.destroy(); rej(new Error('export TIMEOUT')); });
+    r.on('error', rej); r.end();
+  });
+}
+
 async function main() {
   const token = await getFeishuToken();
-  const ws = await readSheet(token, 'wAsSso!A2:H80');
+  const ex = await fetchD1('/api/export/overview');
+  if (!ex.ok) throw new Error('export overview 失败');
+  const ws = ex.ws;
   const days = ws.filter(x => x[0] && ser(x[0]))
     .map(x => ({ date: x[0], s: ser(x[0]), sp: pnum(x[1]), rev: pnum(x[2]), adRoas: ppct(x[3]), cumROI: ppct(x[6]), nu: pnum(x[7]) }));
 

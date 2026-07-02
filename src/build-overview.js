@@ -153,10 +153,28 @@ async function clearRecords(token, tid) {
   return all.length;
 }
 
+// 从 tiktok-analytics 的 D1 导出接口取数(干净的 API 真值),替代读飞书衍生表。
+// 返回 ws(同 wAsSso A-H)/jk(同 JIKPZV B-E),buildRecords 不变。
+function fetchD1(path) {
+  const base = process.env.ANALYTICS_URL, token = process.env.EXPORT_TOKEN;
+  if (!base || !token) throw new Error('缺少 ANALYTICS_URL / EXPORT_TOKEN(D1 导出依赖)');
+  const u = new URL(`${base}${path}${path.includes('?') ? '&' : '?'}token=${token}`);
+  return new Promise((res, rej) => {
+    const r = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET', timeout: 25000 }, rs => {
+      const c = []; rs.on('data', x => c.push(x));
+      rs.on('end', () => { try { res(JSON.parse(Buffer.concat(c).toString('utf8'))); } catch (e) { rej(new Error('export 非 JSON: ' + Buffer.concat(c).toString('utf8').slice(0, 120))); } });
+    });
+    r.on('timeout', () => { r.destroy(); rej(new Error('export TIMEOUT')); });
+    r.on('error', rej); r.end();
+  });
+}
+
 async function main() {
   const token = await getFeishuToken();
-  // wAsSso 读全部(累计ROI 需要从第1天累加);行数随时间增长但远小于 uqJEhq
-  const [ws, jk] = await Promise.all([readSheet(token, 'wAsSso!A2:H2000'), readSheet(token, 'JIKPZV!B2:I2000')]);
+  // 数据源 = D1 导出(API 真值),不再读飞书衍生表 → 根治翻倍、自动含新项目
+  const ex = await fetchD1('/api/export/overview');
+  if (!ex.ok) throw new Error('export overview 失败: ' + JSON.stringify(ex).slice(0, 120));
+  const { ws, jk } = ex;
   const recs = buildRecords(ws, jk);
   if (!recs.length) { console.log('无数据'); return; }
 

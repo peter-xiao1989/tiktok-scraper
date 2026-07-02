@@ -110,11 +110,11 @@ async function fetchEvents(p) {
 // 每次进关(level_enter)/每次曝光(ad_impression)会重复触发,累加会灌成几倍,绝不能放进激活漏斗。
 // 两款游戏埋点体系不同,按游戏各建(积木用 tutorial_*,麻将用 guide_*)。
 const ACTIVATION = {
+  // 注:积木 tutorial_step_1 埋点漏报(实测 <tutorial_complete),不可靠,已剔除
   '积木': [
     { key: 'first_open', name: '首次打开', cands: ['first_open'] },
     { key: 'load_finish', name: '加载完成(新用户)', cands: ['cold_launch_finish', 'loading_complete'] },
     { key: 'guide_enter', name: '进入新手引导', cands: ['tutorial_start', 'show_tutorial_intro', 'tutorial_level_enter'] },
-    { key: 'guide_step1', name: '完成引导第1步', cands: ['tutorial_step_1'] },
     { key: 'guide_finish', name: '完成新手引导', cands: ['tutorial_complete', 'tutorial_finish'] },
   ],
   '麻将': [
@@ -125,16 +125,15 @@ const ACTIVATION = {
     { key: 'guide_finish', name: '完成新手引导', cands: ['guide_all_finish'] },
   ],
 };
-// 激励广告漏斗:发起→完播→发奖(完播率/发放率=IAA 变现健康度)。step_order 20+ 与激活漏斗区分。
+// 激励广告漏斗:发起→发奖(发放率=reward/show=IAA 变现健康度)。step_order 20+ 与激活漏斗区分。
+// 注:两款游戏"完播"埋点(ad_reward_show_success/ad_reward_finish)均漏报不可靠,已剔除,只保留发起/发奖。
 const AD_FUNNEL = {
   '积木': [
     { key: 'adf_show', name: '激励广告发起', cands: ['ad_reward_show', 'ad_reward_show_start'] },
-    { key: 'adf_complete', name: '完播', cands: ['ad_reward_finish', 'ad_reward_show_success'] },
     { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward', 'ad_reward_reward'] },
   ],
   '麻将': [
     { key: 'adf_show', name: '激励广告发起', cands: ['ad_reward_show_start', 'ad_reward_show'] },
-    { key: 'adf_complete', name: '完播', cands: ['ad_reward_show_success'] },
     { key: 'adf_reward', name: '发放奖励', cands: ['ad_reward_reward', 'ad_reward'] },
   ],
 };

@@ -111,4 +111,4 @@ async function scrapeAll(games, date, portalCookies, dataCookies) {
   return rows;
 }
 
-module.exports = { scrapeAll };
+module.exports = { scrapeAll, mapRow };
